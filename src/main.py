@@ -3,8 +3,8 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from cat import Cat
-from macos import hide_dock_icon, show_on_all_spaces
+from controller import Controller
+from macos import hide_dock_icon
 
 
 def main():
@@ -16,9 +16,8 @@ def main():
     # 從終端機執行時，Ctrl+C 可以直接結束
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    cat = Cat()
-    cat.show()
-    show_on_all_spaces(cat)
+    ctrl = Controller()  # noqa: F841  (保持參照，避免被回收)
+    app.aboutToQuit.connect(lambda: [c.save_pos() for c in ctrl.cats])
     sys.exit(app.exec())
 
 

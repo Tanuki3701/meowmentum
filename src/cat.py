@@ -1,186 +1,168 @@
-"""桌面貓咪本體。
+"""一隻桌面貓咪（每隻貓是一個剛好貓咪大小的小視窗）。
 
 省電設計：
-- 貓咪本身就是一個剛好貓咪大小的小視窗（不再是 1920x1080 的透明全螢幕視窗），
-  移動時只是移動這個小視窗，系統幾乎不用重繪。
-- 所有影格在載入時就切好、放大好並快取，畫面更新時只是貼上一張現成的圖。
-- 計時器「需要時才開」：閒置模式下完全沒有計時器在跑（CPU 0%）；
-  漫步模式走到目的地會停下休息；跟隨模式在滑鼠附近時改成低頻率檢查。
-- 使用 CoarseTimer，讓 macOS 可以把喚醒合併在一起，減少耗電。
+- 所有影格啟動時就切好、放大好並快取，畫面更新只是貼一張現成的圖。
+- 計時器「需要時才開」：待著不動時沒有計時器；漫步走到定點會休息；
+  跟隨模式在滑鼠旁、或站在視窗上休息時，改成低頻率檢查。
+- 使用 CoarseTimer，讓 macOS 可以把喚醒合併在一起。
 """
-import os
 import random
-import sys
 
-from PySide6.QtCore import QPoint, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCursor, QGuiApplication, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QWidget
+from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QCursor, QGuiApplication, QPainter
+from PySide6.QtWidgets import QMenu, QWidget
 
-FRAME_W, FRAME_H = 32, 48
-FRAMES_PER_DIR = 3
-STAND_FRAME = 1  # 每排中間那格是站姿
+import sprites
+from overlay import Overlay
 
+STAND_FRAME = 1
 UP, RIGHT, DOWN, LEFT = 0, 1, 2, 3
 
 COLORS = {"black": "黑貓", "white": "白貓", "orange": "橘貓", "brown": "棕貓"}
-MODES = {"idle": "待著不動", "random": "隨意漫步", "follow": "跟著滑鼠"}
+MODES = {"idle": "待著不動", "random": "隨意漫步", "follow": "跟著滑鼠", "windows": "在視窗上走"}
 DIRECTIONS = {DOWN: "面向前", LEFT: "面向左", RIGHT: "面向右", UP: "背對"}
 SIZES = {2: "小", 3: "中", 4: "大"}
 
-MOVE_INTERVAL = 33       # 移動中：約 30fps，已足夠流暢
+MOVE_INTERVAL = 33       # 移動中約 30fps
 ANIM_INTERVAL = 150      # 走路動畫換格速度
-FOLLOW_IDLE_POLL = 250   # 跟隨模式、貓咪已在滑鼠旁時，每 0.25 秒看一次滑鼠
-WANDER_SPEED = 4         # 漫步每步像素
-FOLLOW_MAX_SPEED = 10    # 跟隨每步最大像素
-FOLLOW_DISTANCE = 50     # 距離滑鼠多近就停下
-REST_MS = (2000, 7000)   # 漫步到點後休息多久（毫秒）
+POLL_INTERVAL = 300      # 跟隨模式待命 / 站在視窗上休息時的檢查間隔
+BREATH_INTERVAL = 1100   # 睡覺呼吸動畫
+WANDER_SPEED = 4
+FOLLOW_MAX_SPEED = 10
+FOLLOW_DISTANCE = 50
+REST_MS = (2000, 7000)
 
 
-def resource_path(*parts):
-    """同時支援直接執行原始碼與 PyInstaller 打包後的 .app。"""
-    base = getattr(sys, "_MEIPASS", None) or os.path.join(os.path.dirname(__file__), "..")
-    return os.path.join(base, *parts)
+def add_choices(submenu, options, current, handler):
+    group = QActionGroup(submenu)
+    for value, label in options.items():
+        act = QAction(label, submenu, checkable=True, checked=(value == current))
+        act.triggered.connect(lambda _=False, v=value: handler(v))
+        group.addAction(act)
+        submenu.addAction(act)
 
 
 class Cat(QWidget):
-    def __init__(self):
+    def __init__(self, ctrl, cid, color=None, near=None):
         super().__init__(None)
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.Tool                      # 不出現在 Cmd+Tab / 視窗列表
-            | Qt.NoDropShadowWindowHint    # macOS 預設會加陰影，透明視窗不需要
-        )
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+                            | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)  # 切到別的 App 時不要消失
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
-        self.settings = QSettings("DesktopCat", "DesktopCat")
-        self.color = self.settings.value("color", "orange")
+        self.ctrl = ctrl
+        self.cid = cid
+        self.prefix = f"cat{cid}/"
+        self.color = color or self._pref("color", "orange")
         if self.color not in COLORS:
             self.color = "orange"
-        self.mode = self.settings.value("mode", "idle")
+        self.mode = self._pref("mode", "idle")
         if self.mode not in MODES:
             self.mode = "idle"
-        self.idle_direction = int(self.settings.value("idle_direction", DOWN))
-        self.scale = int(self.settings.value("scale", 3))
+        self.idle_direction = int(self._pref("idle_direction", DOWN))
+        self.scale = int(self._pref("scale", 3))
         if self.scale not in SIZES:
             self.scale = 3
 
         self.direction = self.idle_direction
         self.frame = STAND_FRAME
         self.walking = False
-        self.drag_offset = None
+        self.activity = None      # None / sleep / fetch / eat / spin / jump / fall / drag
         self.target = None
-        self.frames = []
+        self.perch = None         # 站在哪個視窗上：dict(wid, left, top, right, a, b)
+        self.fx = self.fy = 0.0
+        self.vy = 0.0
+        self._press = None
+        self._then = None
+        self._ticks = 0
+        self._sleep_side = 0
+        self._act_count = 0
 
-        # 計時器：只建立，不先啟動
-        self.move_timer = QTimer(self)
-        self.move_timer.setTimerType(Qt.CoarseTimer)
-        self.move_timer.timeout.connect(self._tick)
+        self.overlay = Overlay(self)
 
-        self.anim_timer = QTimer(self)
-        self.anim_timer.setTimerType(Qt.CoarseTimer)
+        self.move_timer = self._timer(self._tick)
+        self.anim_timer = self._timer(self._next_frame)
         self.anim_timer.setInterval(ANIM_INTERVAL)
-        self.anim_timer.timeout.connect(self._next_frame)
-
-        self.rest_timer = QTimer(self)
+        self.act_timer = self._timer(self._act_step)
+        self.rest_timer = self._timer(self._rest_done)
         self.rest_timer.setSingleShot(True)
-        self.rest_timer.setTimerType(Qt.CoarseTimer)
-        self.rest_timer.timeout.connect(self._start_wandering)
 
         self._build_frames()
-        self._restore_position()
+        self._restore_position(near)
         self._apply_mode()
 
-    # ---------------- 影格 ---------------- #
-    def _build_frames(self):
-        path = resource_path("assets", "sprites", f"cat_{self.color}-32x48.png")
-        sheet = QPixmap(path)
-        if sheet.isNull():
-            raise FileNotFoundError(f"找不到圖檔: {path}")
+    def _timer(self, slot):
+        t = QTimer(self)
+        t.setTimerType(Qt.CoarseTimer)
+        t.timeout.connect(slot)
+        return t
 
-        # 依螢幕最高的像素密度預先放大（Retina 上也保持像素風銳利）
-        dpr = max((s.devicePixelRatio() for s in QGuiApplication.screens()), default=1.0)
-        w, h = FRAME_W * self.scale, FRAME_H * self.scale
-        self.frames = []
-        for d in range(4):
-            row = []
-            for f in range(FRAMES_PER_DIR):
-                pm = sheet.copy(f * FRAME_W, d * FRAME_H, FRAME_W, FRAME_H).scaled(
-                    round(w * dpr), round(h * dpr),
-                    Qt.IgnoreAspectRatio, Qt.FastTransformation,
-                )
-                pm.setDevicePixelRatio(dpr)
-                row.append(pm)
-            self.frames.append(row)
-        self.setFixedSize(w, h)
+    # ---------------- 設定 ---------------- #
+    def _pref(self, key, default):
+        s = self.ctrl.settings
+        v = s.value(self.prefix + key)
+        if v is None and self.cid == 0:
+            v = s.value(key)  # 相容舊版（只有一隻貓時）的設定
+        return default if v is None else v
+
+    def _save(self, key, value):
+        self.ctrl.settings.setValue(self.prefix + key, value)
+
+    # ---------------- 影格與繪圖 ---------------- #
+    def _build_frames(self):
+        self.frames = sprites.cat_frames(self.color, self.scale)
+        self.setFixedSize(sprites.FRAME_W * self.scale, sprites.FRAME_H * self.scale)
         self.update()
 
-    def paintEvent(self, _event):
-        QPainter(self).drawPixmap(0, 0, self.frames[self.direction][self.frame])
+    def paintEvent(self, _e):
+        if self.activity == "sleep":
+            pm = self.frames["sleep"][self._sleep_side][self.frame % 2]
+        else:
+            pm = self.frames["walk"][self.direction][self.frame]
+        QPainter(self).drawPixmap(0, 0, pm)
+
+    def content_top(self):
+        """貓咪頭頂在視窗裡的 y（給頭上的泡泡定位）。"""
+        return (29 if self.activity == "sleep" else 20) * self.scale
+
+    def foot_off(self):
+        return sprites.FOOT_GAP * self.scale
 
     def _next_frame(self):
-        self.frame = (self.frame + 1) % FRAMES_PER_DIR
+        self.frame = (self.frame + 1) % sprites.FRAMES_PER_DIR
         self.update()
 
-    # ---------------- 走路狀態 ---------------- #
-    def _set_walking(self, walking, interval=MOVE_INTERVAL):
-        if walking:
-            self.move_timer.start(interval)
-            if not self.walking:
-                self.anim_timer.start()
-        else:
-            self.anim_timer.stop()
-            if self.mode == "follow":
-                self.move_timer.start(FOLLOW_IDLE_POLL)  # 低頻率盯著滑鼠
-            else:
-                self.move_timer.stop()
-            self.frame = STAND_FRAME
-            self.update()
-        self.walking = walking
+    def moveEvent(self, e):
+        self.overlay.follow()
+        super().moveEvent(e)
 
-    def _stop_everything(self):
-        for t in (self.move_timer, self.anim_timer, self.rest_timer):
-            t.stop()
-        self.walking = False
-        self.frame = STAND_FRAME
-
-    def _apply_mode(self):
-        self._stop_everything()
-        if self.mode == "idle":
-            self.direction = self.idle_direction
-            self.update()
-        elif self.mode == "random":
-            self._start_wandering()
-        elif self.mode == "follow":
-            self._set_walking(False)  # 先以低頻率檢查，需要時才開始走
-        self.update()
-
-    def _start_wandering(self):
-        self.target = self._random_target()
-        self._set_walking(True)
-
-    # ---------------- 移動 ---------------- #
-    def _screen_rect(self, point=None):
+    # ---------------- 位置工具 ---------------- #
+    def screen_rect(self, point=None):
         point = point or self.geometry().center()
         screen = QGuiApplication.screenAt(point) or self.screen() or QGuiApplication.primaryScreen()
-        return screen.availableGeometry()  # 扣掉選單列和 Dock
+        return screen.availableGeometry()
+
+    def ground_y(self):
+        r = self.screen_rect()
+        return r.bottom() + 1 - (self.height() - self.foot_off())
+
+    def center_x(self):
+        return self.x() + self.width() / 2
 
     def _clamp(self, x, y):
-        r = self._screen_rect(QPoint(x + self.width() // 2, y + self.height() // 2))
+        r = self.screen_rect(QPoint(int(x) + self.width() // 2, int(y) + self.height() // 2))
         x = max(r.left(), min(x, r.right() - self.width() + 1))
-        y = max(r.top(), min(y, r.bottom() - self.height() + 1))
+        y = max(r.top(), min(y, r.bottom() - self.height() + 1 + self.foot_off()))
         return x, y
 
-    def _random_target(self):
-        r = self._screen_rect()
-        return (
-            random.randint(r.left(), max(r.left(), r.right() - self.width())),
-            random.randint(r.top(), max(r.top(), r.bottom() - self.height())),
-        )
+    def _move_to(self, x, y, clamp=True):
+        if clamp:
+            x, y = self._clamp(x, y)
+        self.fx, self.fy = float(x), float(y)
+        self.move(int(round(x)), int(round(y)))
 
-    def _face(self, dx, dy):
+    def _face(self, dx, dy=0):
         if abs(dx) > abs(dy):
             d = RIGHT if dx > 0 else LEFT
         else:
@@ -189,26 +171,103 @@ class Cat(QWidget):
             self.direction = d
             self.update()
 
-    def _tick(self):
-        if self.drag_offset is not None:
+    def _speed(self, base):
+        return base * (0.5 if self.ctrl.tired else 1.0)
+
+    # ---------------- 走路狀態 ---------------- #
+    def _set_walking(self, walking, interval=MOVE_INTERVAL):
+        if walking:
+            self.move_timer.start(interval)
+            if not self.walking:
+                self.anim_timer.start(ANIM_INTERVAL * (2 if self.ctrl.tired else 1))
+        else:
+            self.anim_timer.stop()
+            if self.mode == "follow" or (self.mode == "windows" and self.perch):
+                self.move_timer.start(POLL_INTERVAL)
+            else:
+                self.move_timer.stop()
+            self.frame = STAND_FRAME
+            self.update()
+        self.walking = walking
+
+    def _stop_all(self):
+        for t in (self.move_timer, self.anim_timer, self.rest_timer, self.act_timer):
+            t.stop()
+        self.walking = False
+        self.frame = STAND_FRAME
+
+    def refresh_speed(self):
+        if self.walking:
+            self.anim_timer.start(ANIM_INTERVAL * (2 if self.ctrl.tired else 1))
+
+    def _apply_mode(self):
+        self._stop_all()
+        self.activity = None
+        self.fx, self.fy = float(self.x()), float(self.y())
+        if self.mode != "windows":
+            self.perch = None
+        if self.mode == "idle":
+            self.direction = self.idle_direction
+        elif self.mode == "random":
+            self._start_wandering()
+        elif self.mode == "follow":
+            self._set_walking(False)
+        elif self.mode == "windows":
+            self._set_walking(False)
+            self.rest_timer.start(600)
+        self.update()
+
+    def _resume(self):
+        self._apply_mode()
+
+    def _rest_done(self):
+        if self.activity is not None:
             return
         if self.mode == "random":
-            self._wander_step()
-        elif self.mode == "follow":
-            self._follow_step()
+            self._start_wandering()
+        elif self.mode == "windows":
+            self._windows_next()
+
+    def _start_wandering(self):
+        r = self.screen_rect()
+        self.target = (random.randint(r.left(), max(r.left(), r.right() - self.width())),
+                       random.randint(r.top(), max(r.top(), r.bottom() - self.height())))
+        self._set_walking(True)
+
+    # ---------------- 每一步 ---------------- #
+    def _tick(self):
+        a = self.activity
+        if a == "drag":
+            return
+        if a == "fetch":
+            self._fetch_step()
+        elif a == "jump":
+            self._jump_step()
+        elif a == "fall":
+            self._fall_step()
+        elif a is None:
+            if self.mode == "random":
+                self._wander_step()
+            elif self.mode == "follow":
+                self._follow_step()
+            elif self.mode == "windows":
+                self._windows_step()
+
+    def _step_towards(self, tx, ty, speed):
+        dx, dy = tx - self.fx, ty - self.fy
+        if abs(dx) <= speed and abs(dy) <= speed:
+            self._move_to(tx, ty, clamp=self.mode != "windows")
+            return True
+        self._face(dx, dy)
+        sx = max(-speed, min(speed, dx))
+        sy = max(-speed, min(speed, dy))
+        self._move_to(self.fx + sx, self.fy + sy, clamp=self.mode != "windows")
+        return False
 
     def _wander_step(self):
-        tx, ty = self.target
-        dx, dy = tx - self.x(), ty - self.y()
-        if abs(dx) <= WANDER_SPEED and abs(dy) <= WANDER_SPEED:
-            self.move(*self._clamp(tx, ty))
+        if self._step_towards(*self.target, self._speed(WANDER_SPEED)):
             self._set_walking(False)
-            self.rest_timer.start(random.randint(*REST_MS))  # 休息一下再走
-            return
-        sx = max(-WANDER_SPEED, min(WANDER_SPEED, dx))
-        sy = max(-WANDER_SPEED, min(WANDER_SPEED, dy))
-        self._face(dx, dy)
-        self.move(*self._clamp(self.x() + sx, self.y() + sy))
+            self.rest_timer.start(random.randint(*REST_MS))
 
     def _follow_step(self):
         cursor = QCursor.pos()
@@ -220,84 +279,368 @@ class Cat(QWidget):
             return
         if not self.walking:
             self._set_walking(True)
-        sx = max(-FOLLOW_MAX_SPEED, min(FOLLOW_MAX_SPEED, int(dx * 0.1)))
-        sy = max(-FOLLOW_MAX_SPEED, min(FOLLOW_MAX_SPEED, int(dy * 0.1)))
+        top = self._speed(FOLLOW_MAX_SPEED)
+        sx = max(-top, min(top, dx * 0.1))
+        sy = max(-top, min(top, dy * 0.1))
         self._face(dx, dy)
-        self.move(*self._clamp(self.x() + sx, self.y() + sy))
+        self._move_to(self.fx + sx, self.fy + sy)
 
-    # ---------------- 拖曳 ---------------- #
+    # ---------------- 在視窗上走 ---------------- #
+    def _perch_cat_y(self, top):
+        return top - (self.height() - self.foot_off())
+
+    def _on_ground(self):
+        return self.perch is None and abs(self.y() - self.ground_y()) <= 3
+
+    def _windows_next(self):
+        if self.perch is None and not self._on_ground():
+            self.start_fall()
+            return
+        segs = self.ctrl.top_segments(self)
+        if self.perch:
+            segs = [s for s in segs if s["wid"] != self.perch["wid"]] or segs
+        if segs and random.random() < 0.7:
+            seg = random.choice(segs)
+            cx = random.uniform(seg["a"], seg["b"])
+            self.jump_to(cx - self.width() / 2, self._perch_cat_y(seg["top"]), seg)
+            return
+        # 沿著現在站的地方走一段
+        if self.perch:
+            a, b = self.perch["a"], self.perch["b"]
+            y = self._perch_cat_y(self.perch["top"])
+        else:
+            r = self.screen_rect()
+            a, b = r.left() + self.width() / 2, r.right() - self.width() / 2
+            y = self.ground_y()
+        self.target = (random.uniform(a, b) - self.width() / 2, y)
+        self._set_walking(True)
+
+    def _windows_step(self):
+        self._ticks += 1
+        if self.perch and (not self.walking or self._ticks % 8 == 0):
+            if not self._verify_perch():
+                return
+        if self.walking and self.target:
+            tx, ty = self.target
+            if self._step_towards(tx, ty, self._speed(WANDER_SPEED)):
+                self._set_walking(False)
+                self.rest_timer.start(random.randint(1500, 5000))
+
+    def _verify_perch(self):
+        """確認腳下的視窗還在；視窗被拖動就跟著移動，視窗不見了就掉下去。"""
+        p = self.perch
+        rect = None
+        for wid, r in self.ctrl.windows():
+            if wid == p["wid"]:
+                rect = r
+                break
+        if rect is None:
+            self.start_fall()
+            return False
+        dx, dy = rect.left() - p["left"], rect.top() - p["top"]
+        if dx or dy:
+            p.update(left=rect.left(), top=rect.top(), right=rect.right(),
+                     a=p["a"] + dx, b=p["b"] + dx)
+            self._move_to(self.fx + dx, self.fy + dy, clamp=False)
+            if self.target:
+                self.target = (self.target[0] + dx, self.target[1] + dy)
+            if not self.walking:
+                self.move_timer.start(MOVE_INTERVAL)  # 視窗在動：暫時提高檢查頻率
+        elif not self.walking and self.move_timer.interval() != POLL_INTERVAL:
+            self.move_timer.start(POLL_INTERVAL)
+        cx = self.center_x()
+        if not (rect.left() <= cx <= rect.right()):
+            self.start_fall()
+            return False
+        return True
+
+    def jump_to(self, x, y, perch):
+        self._stop_all()
+        self.activity = "jump"
+        self._j0 = (self.fx, self.fy)
+        self._j1 = (x, y)
+        dist = ((x - self.fx) ** 2 + (y - self.fy) ** 2) ** 0.5
+        self._jn = max(10, int(dist / 14))
+        self._jt = 0
+        self._arc = max(50, (self.fy - y) / 2 + 45)
+        self._jump_perch = perch
+        self.perch = None
+        self._face(x - self.fx)
+        self.walking = True
+        self.anim_timer.start(ANIM_INTERVAL // 2)
+        self.move_timer.start(MOVE_INTERVAL)
+
+    def _jump_step(self):
+        self._jt += 1
+        t = min(1.0, self._jt / self._jn)
+        (x0, y0), (x1, y1) = self._j0, self._j1
+        x = x0 + (x1 - x0) * t
+        y = y0 + (y1 - y0) * t - self._arc * 4 * t * (1 - t)
+        self._move_to(x, y, clamp=False)
+        if t >= 1:
+            self.activity = None
+            self.perch = self._jump_perch
+            self._set_walking(False)
+            if self.perch and not self._verify_perch():
+                return
+            self.rest_timer.start(random.randint(1500, 5000))
+
+    def start_fall(self):
+        self._stop_all()
+        self.activity = "fall"
+        self.perch = None
+        self.vy = 0.0
+        self.fx, self.fy = float(self.x()), float(self.y())
+        self._fall_segs = self.ctrl.top_segments(self) if self.mode == "windows" else []
+        self.update()
+        self.move_timer.start(MOVE_INTERVAL)
+
+    def _fall_step(self):
+        self.vy = min(self.vy + 1.5, 28)
+        ny = self.fy + self.vy
+        foot = self.height() - self.foot_off()
+        prev_feet, new_feet = self.fy + foot, ny + foot
+        cx = self.center_x()
+        for seg in self._fall_segs:
+            if seg["a"] <= cx <= seg["b"] and prev_feet <= seg["top"] <= new_feet:
+                self.perch = seg
+                self._move_to(self.fx, self._perch_cat_y(seg["top"]), clamp=False)
+                self._landed()
+                return
+        gy = self.ground_y()
+        if ny >= gy:
+            self._move_to(self.fx, gy, clamp=False)
+            self._landed()
+            return
+        self._move_to(self.fx, ny, clamp=False)
+
+    def _landed(self):
+        self.activity = None
+        self.vy = 0
+        if self.mode == "windows":
+            self._set_walking(False)
+            self.rest_timer.start(random.randint(800, 2500))
+        else:
+            self._resume()
+
+    # ---------------- 特別動作 ---------------- #
+    def go_to(self, x, y, then=None, speed=7):
+        if self.activity == "sleep":
+            self.wake(quiet=True)
+        self._stop_all()
+        self.activity = "fetch"
+        self.perch = None
+        self.fx, self.fy = float(self.x()), float(self.y())
+        self.target = (x, y)
+        self._then = then
+        self._fetch_speed = speed
+        self._set_walking(True)
+
+    def _fetch_step(self):
+        if self._step_towards(*self.target, self._speed(self._fetch_speed)):
+            self._stop_all()
+            self.activity = None
+            then, self._then = self._then, None
+            if then:
+                then()
+            else:
+                self._resume()
+
+    def eat(self, food):
+        self._stop_all()
+        self.activity = "eat"
+        self._food = food
+        self._face(food.center_x() - self.center_x())
+        self._act_count = 0
+        self.act_timer.start(260)
+
+    def spin(self, rounds=2):
+        if self.activity == "sleep":
+            self.wake(quiet=True)
+        if self.activity is not None:
+            self.overlay.burst("heart", 3)
+            return
+        self._stop_all()
+        self.activity = "spin"
+        self._act_count = 0
+        self._spin_total = 4 * rounds
+        self.act_timer.start(110)
+
+    def sleep(self):
+        if self.activity is not None:
+            return
+        self._stop_all()
+        self.activity = "sleep"
+        self._sleep_side = 1 if self.direction == LEFT else 0
+        self.frame = 0
+        self._act_count = 0
+        self.act_timer.start(BREATH_INTERVAL)
+        self.update()
+        self.overlay.follow()
+
+    def wake(self, quiet=False):
+        if self.activity != "sleep":
+            return
+        self.act_timer.stop()
+        self.direction = LEFT if self._sleep_side else RIGHT
+        self.activity = None
+        self.frame = STAND_FRAME
+        self.update()
+        if not quiet:
+            self.overlay.say("喵～ 早安！", 2000)
+        self._resume()
+
+    def petted(self):
+        self.overlay.burst("heart", 3)
+        if self.activity != "sleep":
+            self.overlay.say(random.choice(["呼嚕呼嚕～", "喵～ ❤", "好舒服～"]), 1800)
+
+    def _act_step(self):
+        self._act_count += 1
+        n = self._act_count
+        if self.activity == "sleep":
+            self.frame ^= 1
+            self.update()
+            if n % 2 == 0:
+                self.overlay.zzz()
+            if self.perch and n % 3 == 0:
+                for wid, _ in self.ctrl.windows():
+                    if wid == self.perch["wid"]:
+                        break
+                else:
+                    self.wake(quiet=True)
+                    self.start_fall()
+        elif self.activity == "spin":
+            self.direction = (DOWN, RIGHT, UP, LEFT)[n % 4]
+            self.update()
+            if n >= self._spin_total:
+                self.act_timer.stop()
+                self.activity = None
+                self.direction = DOWN
+                self._resume()
+        elif self.activity == "eat":
+            self.frame = 0 if n % 2 else 2
+            self.update()
+            if n % 3 == 0:
+                self.overlay.burst("heart", 1)
+            if n >= 10:
+                self.act_timer.stop()
+                self._food.close()
+                self._food = None
+                self.activity = None
+                self.overlay.say("好吃！謝謝～", 2500)
+                self.overlay.burst("heart", 4)
+                self._resume()
+
+    # ---------------- 滑鼠：點擊、拖曳 ---------------- #
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            self.drag_offset = e.globalPosition().toPoint() - self.pos()
+            gp = e.globalPosition().toPoint()
+            self._press = (gp, gp - self.pos())
 
     def mouseMoveEvent(self, e):
-        if self.drag_offset is not None:
-            self.move(e.globalPosition().toPoint() - self.drag_offset)
+        if not self._press:
+            return
+        gp = e.globalPosition().toPoint()
+        if self.activity != "drag":
+            if (gp - self._press[0]).manhattanLength() < 5:
+                return
+            if self.activity == "sleep":
+                self.wake(quiet=True)
+            if self.activity == "eat" and getattr(self, "_food", None):
+                self._food.close()
+                self._food = None
+            self._stop_all()
+            self.activity = "drag"
+            self.perch = None
+            self.direction = DOWN
+            self.update()
+        self.move(gp - self._press[1])
 
     def mouseReleaseEvent(self, e):
-        if e.button() == Qt.LeftButton and self.drag_offset is not None:
-            self.drag_offset = None
-            self.move(*self._clamp(self.x(), self.y()))
-            self._save_position()
-            if self.mode == "random" and self.walking:
-                self.target = self._random_target()
+        if e.button() != Qt.LeftButton or not self._press:
+            return
+        self._press = None
+        if self.activity == "drag":
+            self.activity = None
+            x, _ = self._clamp(self.x(), self.y())
+            self._move_to(x, self.y(), clamp=False)
+            self.save_pos()
+            if self.mode == "windows":
+                self.start_fall()
+            else:
+                self._move_to(*self._clamp(self.x(), self.y()))
+                self._resume()
+        elif self.activity == "sleep":
+            self.wake()
+            self.overlay.burst("heart", 2)
+        else:
+            self.ctrl.toggle_todo(self)
 
-    # ---------------- 右鍵選單 ---------------- #
     def contextMenuEvent(self, e):
         menu = QMenu(self)
-        self._add_choices(menu.addMenu("顏色"), COLORS, self.color, self.set_color)
-        self._add_choices(menu.addMenu("模式"), MODES, self.mode, self.set_mode)
-        self._add_choices(menu.addMenu("待著時的方向"), DIRECTIONS, self.idle_direction,
-                          self.set_idle_direction)
-        self._add_choices(menu.addMenu("大小"), SIZES, self.scale, self.set_scale)
-        menu.addSeparator()
-        menu.addAction("結束").triggered.connect(self.quit)
+        self.ctrl.build_menu(self, menu)
         menu.exec(e.globalPos())
 
-    def _add_choices(self, submenu, options, current, handler):
-        group = QActionGroup(submenu)
-        for value, label in options.items():
-            act = QAction(label, submenu, checkable=True, checked=(value == current))
-            act.triggered.connect(lambda _=False, v=value: handler(v))
-            group.addAction(act)
-            submenu.addAction(act)
+    def add_own_menus(self, menu):
+        add_choices(menu.addMenu("模式"), MODES, self.mode, self.set_mode)
+        add_choices(menu.addMenu("顏色"), COLORS, self.color, self.set_color)
+        add_choices(menu.addMenu("待著時的方向"), DIRECTIONS, self.idle_direction,
+                    self.set_idle_direction)
+        add_choices(menu.addMenu("大小"), SIZES, self.scale, self.set_scale)
 
+    # ---------------- 設定變更 ---------------- #
     def set_color(self, color):
         self.color = color
-        self.settings.setValue("color", color)
+        self._save("color", color)
         self._build_frames()
 
     def set_mode(self, mode):
+        if self.activity == "sleep":
+            self.wake(quiet=True)
         self.mode = mode
-        self.settings.setValue("mode", mode)
+        self._save("mode", mode)
         self._apply_mode()
 
     def set_idle_direction(self, direction):
         self.idle_direction = direction
-        self.settings.setValue("idle_direction", direction)
-        if self.mode == "idle":
+        self._save("idle_direction", direction)
+        if self.mode == "idle" and self.activity is None:
             self.direction = direction
             self.update()
 
     def set_scale(self, scale):
+        bottom = self.y() + self.height()
         self.scale = scale
-        self.settings.setValue("scale", scale)
+        self._save("scale", scale)
         self._build_frames()
-        self.move(*self._clamp(self.x(), self.y()))
+        self._move_to(self.x(), bottom - self.height())
+        if self.mode == "windows":
+            self.perch = None
+            self._apply_mode()
 
-    # ---------------- 位置記憶 / 結束 ---------------- #
-    def _restore_position(self):
-        pos = self.settings.value("pos")
+    # ---------------- 位置記憶 / 移除 ---------------- #
+    def _restore_position(self, near):
+        if near is not None:
+            r = near.screen_rect()
+            x = near.x() + random.choice((-1, 1)) * random.randint(self.width(), self.width() * 3)
+            self._move_to(*self._clamp(x, near.y()))
+            return
+        pos = self._pref("pos", None)
         if isinstance(pos, QPoint) and QGuiApplication.screenAt(pos):
-            self.move(*self._clamp(pos.x(), pos.y()))
+            self._move_to(*self._clamp(pos.x(), pos.y()))
         else:
             r = QGuiApplication.primaryScreen().availableGeometry()
-            self.move(r.right() - self.width() - 80, r.bottom() - self.height())
+            self._move_to(r.right() - self.width() - 80 - 160 * self.cid,
+                          r.bottom() + 1 - (self.height() - self.foot_off()))
 
-    def _save_position(self):
-        self.settings.setValue("pos", self.pos())
+    def save_pos(self):
+        self._save("pos", self.pos())
 
-    def quit(self):
-        self._save_position()
-        self.settings.sync()
-        QApplication.quit()
+    def dispose(self):
+        self._stop_all()
+        if getattr(self, "_food", None):
+            self._food.close()
+        self.overlay.close()
+        self.close()
+        self.deleteLater()
