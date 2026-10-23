@@ -102,30 +102,19 @@ def install(app):
     app.setStyle(MenuStyle())
 
 
-class GlassMenu(QMenu):
-    def __init__(self, title="", parent=None):
-        super().__init__(title, parent)
-        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet((QSS_GLASS if macos.GLASS_AVAILABLE else QSS_PLAIN) + QSS_ITEMS)
-        self._glass = False
-
-    def showEvent(self, e):
-        super().showEvent(e)
-        if macos.GLASS_AVAILABLE and not self._glass:
-            self._glass = True
-            QTimer.singleShot(0, lambda: macos.apply_glass(self, _mask(), RADIUS))
+class MenuHelpers:
+    """sub / item / choices：讓毛玻璃選單和選單列（原生）選單用同一套寫法。"""
 
     def sub(self, icon_name, text):
-        m = GlassMenu(text, self)
+        m = type(self)(text, self)
         m.setIcon(pixel.icon(icon_name) if isinstance(icon_name, str) else icon_name)
         self.addMenu(m)
         return m
 
     def item(self, icon_name, text, slot):
         act = self.addAction(text)
-        if icon_name is not None:
-            act.setIcon(pixel.icon(icon_name) if isinstance(icon_name, str) else icon_name)
+        act.setIcon(pixel.icon(icon_name) if isinstance(icon_name, str)
+                    else (icon_name if icon_name is not None else pixel.blank_icon()))
         act.triggered.connect(lambda _=False: slot())
         return act
 
@@ -140,3 +129,22 @@ class GlassMenu(QMenu):
                 ic = pixel.blank_icon()
             act = self.addAction(ic, label)
             act.triggered.connect(lambda _=False, v=value: handler(v))
+
+
+class GlassMenu(MenuHelpers, QMenu):
+    def __init__(self, title="", parent=None):
+        super().__init__(title, parent)
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet((QSS_GLASS if macos.GLASS_AVAILABLE else QSS_PLAIN) + QSS_ITEMS)
+        self._glass = False
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if macos.GLASS_AVAILABLE and not self._glass:
+            self._glass = True
+            QTimer.singleShot(0, lambda: macos.apply_glass(self, _mask(), RADIUS))
+
+
+class PlainMenu(MenuHelpers, QMenu):
+    """選單列用的選單（macOS 會轉成系統原生選單）。"""

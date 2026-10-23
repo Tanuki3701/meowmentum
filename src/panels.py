@@ -414,6 +414,21 @@ class TimePicker(PixelPanel):
         self.chips.setSpacing(4)
         lay.addLayout(self.chips)
 
+        # 最近使用（每一個都可以刪除）
+        self.recent_box = QWidget()
+        rl = QHBoxLayout(self.recent_box)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(4)
+        self.recent_label = QLabel()
+        self.recent_label.setFont(pixel.font(12))
+        self.recent_label.setStyleSheet("color: #7a6a58;")
+        rl.addWidget(self.recent_label)
+        self.recent_row = QHBoxLayout()
+        self.recent_row.setSpacing(6)
+        rl.addLayout(self.recent_row)
+        rl.addStretch()
+        lay.addWidget(self.recent_box)
+
         self.hint = QLabel()
         self.hint.setFont(pixel.font(12))
         self.hint.setAlignment(Qt.AlignCenter)
@@ -434,7 +449,7 @@ class TimePicker(PixelPanel):
     def open(self, kind, cat):
         self.kind = kind
         if kind == "focus":
-            current = self.ctrl.custom_focus or 25
+            current = (self.ctrl.recent["focus"] or [25])[0]
             self._title_icon.setPixmap(pixel.tomato(1.0, 2))
         else:
             current = self.ctrl.break_min
@@ -448,12 +463,41 @@ class TimePicker(PixelPanel):
             b = PixelButton(str(m))
             b.clicked.connect(lambda _=False, m=m: self._set(m))
             self.chips.addWidget(b)
+        self._fill_recent()
         self._set(current)
         self.place_near(cat)
         self.value.setFocus()
         self.value.selectAll()
 
+    def _fill_recent(self):
+        while self.recent_row.count():
+            w = self.recent_row.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        items = self.ctrl.recent[self.kind]
+        self.recent_box.setVisible(bool(items))
+        for m in items:
+            chip = QWidget()
+            cl = QHBoxLayout(chip)
+            cl.setContentsMargins(0, 0, 0, 0)
+            cl.setSpacing(0)
+            b = PixelButton(str(m))
+            b.clicked.connect(lambda _=False, m=m: self._set(m))
+            cl.addWidget(b)
+            x = PixelButton(icon=pixel.icon_pixmap("close", 1, (7, 7)))
+            x.setFixedSize(16, 24)
+            x.setToolTip(tr("delete"))
+            x.clicked.connect(lambda _=False, m=m: self._forget(m))
+            cl.addWidget(x)
+            self.recent_row.addWidget(chip)
+        self.adjustSize()
+
+    def _forget(self, m):
+        self.ctrl.forget_recent(self.kind, m)
+        self._fill_recent()
+
     def retranslate(self):
+        self.recent_label.setText(tr("recent"))
         self.title.setText(tr("pick_focus" if self.kind == "focus" else "pick_break"))
         self.unit.setText(tr("minutes"))
         self.hint.setText(tr("pick_hint_break") if self.kind == "break" else "")
@@ -497,10 +541,180 @@ class TimePicker(PixelPanel):
             super().keyPressEvent(e)
 
 
+class Swatch(QAbstractButton):
+    """像素風色塊按鈕。"""
+
+    def __init__(self, rgb, parent=None):
+        super().__init__(parent)
+        self.rgb = tuple(rgb)
+        self.setCheckable(True)
+        self.setFixedSize(22, 22)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        r = self.rect().adjusted(1, 1, -2, -2)
+        pixel.draw_box(p, r, 2, fill=QColor(*self.rgb), light=None, shadow=False)
+        if self.isChecked():
+            p.fillRect(QRect(r.left(), r.bottom() + 1, r.width(), 2), pixel.INK)
+            p.fillRect(QRect(r.center().x() - 2, r.center().y() - 2, 4, 4), QColor(255, 255, 255))
+
+
+class PaletteDialog(PixelPanel):
+    """貓咪調色盤：選毛色和眼睛顏色，即時預覽，存成自己的貓。"""
+    W = 360
+    FURS = [(150, 150, 158), (112, 128, 150), (236, 218, 180), (214, 120, 60), (110, 70, 50),
+            (228, 190, 90), (236, 170, 190), (180, 160, 220), (150, 210, 180), (140, 190, 230),
+            (80, 80, 90), (245, 245, 245)]
+    EYES = [(58, 55, 55), (60, 160, 80), (230, 190, 60), (80, 150, 230), (220, 140, 50),
+            (180, 90, 50), (150, 90, 200), (200, 60, 60)]
+
+    def __init__(self, ctrl):
+        super().__init__()
+        self.ctrl = ctrl
+        self.target = None
+        self.fur = self.FURS[1]
+        self.eye = self.EYES[3]
+        self.setFixedWidth(self.W)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(U * 2 + 8, U + 6, U * 2 + 8 + U, U * 2 + 10 + U)
+        lay.setSpacing(6)
+        self.title = QLabel()
+        lay.addWidget(self._title_bar(pixel.icon_pixmap("palette", 2), self.title, self.hide))
+
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setFixedHeight(150)
+        lay.addWidget(self.preview)
+
+        self.fur_label, self.fur_btns = self._swatch_row(lay, self.FURS, self._pick_fur, "fur")
+        self.eye_label, self.eye_btns = self._swatch_row(lay, self.EYES, self._pick_eye, "eye")
+
+        self.mine_label = QLabel()
+        self.mine_label.setFont(pixel.font(12))
+        self.mine_label.setStyleSheet("color: #7a6a58;")
+        lay.addWidget(self.mine_label)
+        self.mine_row = QHBoxLayout()
+        self.mine_row.setSpacing(6)
+        lay.addLayout(self.mine_row)
+
+        foot = QHBoxLayout()
+        foot.addStretch()
+        self.cancel_btn = PixelButton()
+        self.cancel_btn.clicked.connect(self.hide)
+        foot.addWidget(self.cancel_btn)
+        self.save_btn = PixelButton()
+        self.save_btn.clicked.connect(self._save)
+        foot.addWidget(self.save_btn)
+        lay.addLayout(foot)
+
+    def _swatch_row(self, lay, colors, handler, kind):
+        label = QLabel()
+        label.setFont(pixel.font(12))
+        label.setStyleSheet("color: #3a3737;")
+        lay.addWidget(label)
+        row = QHBoxLayout()
+        row.setSpacing(2)
+        btns = []
+        for rgb in colors:
+            b = Swatch(rgb)
+            b.clicked.connect(lambda _=False, rgb=rgb: handler(rgb))
+            row.addWidget(b)
+            btns.append(b)
+        more = PixelButton("...")
+        more.setFixedHeight(22)
+        more.clicked.connect(lambda: self._more(kind))
+        row.addWidget(more)
+        row.addStretch()
+        lay.addLayout(row)
+        return label, btns
+
+    def _more(self, kind):
+        from PySide6.QtWidgets import QColorDialog
+        cur = QColor(*(self.fur if kind == "fur" else self.eye))
+        c = QColorDialog.getColor(cur, self, tr("palette"))
+        if c.isValid():
+            (self._pick_fur if kind == "fur" else self._pick_eye)((c.red(), c.green(), c.blue()))
+        self.raise_()
+
+    def _pick_fur(self, rgb):
+        self.fur = tuple(rgb)
+        self._refresh()
+
+    def _pick_eye(self, rgb):
+        self.eye = tuple(rgb)
+        self._refresh()
+
+    def _refresh(self):
+        for b in self.fur_btns:
+            b.setChecked(b.rgb == self.fur)
+        for b in self.eye_btns:
+            b.setChecked(b.rgb == self.eye)
+        sp = sprites.derive_spec(self.fur, self.eye)
+        self.preview.setPixmap(sprites.preview_image(sp, 4).copy(0, int(60 * sprites._dpr()),
+                                                                 int(128 * sprites._dpr()),
+                                                                 int(132 * sprites._dpr())))
+
+    def _fill_mine(self):
+        while self.mine_row.count():
+            w = self.mine_row.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        names = self.ctrl.custom_color_names()
+        self.mine_label.setVisible(bool(names))
+        for cid in names:
+            chip = QWidget()
+            cl = QHBoxLayout(chip)
+            cl.setContentsMargins(0, 0, 0, 0)
+            cl.setSpacing(0)
+            b = PixelButton(icon=pixel.cat_head_icon(cid).pixmap(18, 18))
+            b.setFixedSize(26, 26)
+            b.setToolTip(names[cid])
+            b.clicked.connect(lambda _=False, cid=cid: self._apply(cid))
+            cl.addWidget(b)
+            x = PixelButton(icon=pixel.icon_pixmap("close", 1, (7, 7)))
+            x.setFixedSize(14, 26)
+            x.setToolTip(tr("delete"))
+            x.clicked.connect(lambda _=False, cid=cid: self._delete(cid))
+            cl.addWidget(x)
+            self.mine_row.addWidget(chip)
+        self.mine_row.addStretch()
+        self.adjustSize()
+
+    def _apply(self, cid):
+        if self.target in self.ctrl.cats:
+            self.target.set_color(cid)
+
+    def _delete(self, cid):
+        self.ctrl.delete_custom_color(cid)
+        self._fill_mine()
+
+    def _save(self):
+        cid = self.ctrl.add_custom_color(self.fur, self.eye)
+        self._apply(cid)
+        self.hide()
+
+    def retranslate(self):
+        self.title.setText(tr("palette_title"))
+        self.fur_label.setText(tr("fur"))
+        self.eye_label.setText(tr("eyes"))
+        self.mine_label.setText(tr("my_colors"))
+        self.cancel_btn.setText(tr("cancel"))
+        self.save_btn.setText(tr("save_apply"))
+
+    def open_for(self, cat):
+        self.target = cat
+        self.retranslate()
+        self._fill_mine()
+        self._refresh()
+        self.place_near(cat)
+
+
 class Food(QWidget):
     """從天上掉下來的罐罐。"""
 
-    def __init__(self, x, top, ground_y, scale, on_land):
+    def __init__(self, x, top, ground_y, scale, on_land, flavor="tuna"):
         super().__init__(None)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
                             | Qt.WindowTransparentForInput | Qt.NoDropShadowWindowHint)
@@ -508,7 +722,8 @@ class Food(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.pm = sprites.effect("can", scale)
+        self.flavor = flavor
+        self.pm = sprites.effect("can_" + flavor, scale)
         dpr = self.pm.devicePixelRatio()
         self.setFixedSize(int(self.pm.width() / dpr), int(self.pm.height() / dpr))
         self.ground = ground_y - self.height()

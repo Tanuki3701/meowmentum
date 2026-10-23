@@ -7,6 +7,7 @@
 - 使用 CoarseTimer，讓 macOS 可以把喚醒合併在一起。
 """
 import random
+import time
 
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication, QPainter
@@ -49,7 +50,7 @@ class Cat(QWidget):
         self.cid = cid
         self.prefix = f"cat{cid}/"
         self.color = color or self._pref("color", "orange")
-        if self.color not in COLORS:
+        if self.color not in COLORS and self.color not in sprites.CUSTOM:
             self.color = "orange"
         self.mode = self._pref("mode", "idle")
         if self.mode not in MODES:
@@ -81,6 +82,13 @@ class Cat(QWidget):
         self.act_timer = self._timer(self._act_step)
         self.rest_timer = self._timer(self._rest_done)
         self.rest_timer.setSingleShot(True)
+        self.expression = None      # 表情：happy / excited / yuck / dizzy
+        self._expr_side = 0
+        self.expr_timer = self._timer(self._clear_expression)
+        self.expr_timer.setSingleShot(True)
+        self.hold_timer = self._timer(self._end_hold)   # 「愣住一下」之後才恢復原本的模式
+        self.hold_timer.setSingleShot(True)
+        self._hold_then = None
 
         self._build_frames()
         self._restore_position(near)
@@ -112,6 +120,8 @@ class Cat(QWidget):
     def paintEvent(self, _e):
         if self.activity == "sleep":
             pm = self.frames["sleep"][self._sleep_side][self.frame % 2]
+        elif self.expression and not self.walking:
+            pm = self.frames["expr"][self.expression][self._expr_side]
         else:
             pm = self.frames["walk"][self.direction][self.frame]
         QPainter(self).drawPixmap(0, 0, pm)
@@ -241,6 +251,8 @@ class Cat(QWidget):
             self._jump_step()
         elif a == "fall":
             self._fall_step()
+        elif a == "zoom":
+            self._zoom_step()
         elif a is None:
             if self.mode == "random":
                 self._wander_step()
@@ -350,8 +362,9 @@ class Cat(QWidget):
             return False
         return True
 
-    def jump_to(self, x, y, perch):
+    def jump_to(self, x, y, perch, then=None):
         self._stop_all()
+        self._jump_then = then
         self.activity = "jump"
         self._j0 = (self.fx, self.fy)
         self._j1 = (x, y)
@@ -375,6 +388,11 @@ class Cat(QWidget):
         self._move_to(x, y, clamp=False)
         if t >= 1:
             self.activity = None
+            if self._jump_then:
+                then, self._jump_then = self._jump_then, None
+                self._stop_all()
+                then()
+                return
             self.perch = self._jump_perch
             self._set_walking(False)
             if self.perch and not self._verify_perch():
@@ -421,6 +439,8 @@ class Cat(QWidget):
 
     # ---------------- 特別動作 ---------------- #
     def go_to(self, x, y, then=None, speed=7):
+        if self.activity == "home":
+            self._exit_home()
         if self.activity == "sleep":
             self.wake(quiet=True, force=True)
         self._stop_all()
@@ -445,12 +465,16 @@ class Cat(QWidget):
     def eat(self, food):
         self._stop_all()
         self.activity = "eat"
+        self.expression = None
         self._food = food
         self._face(food.center_x() - self.center_x())
         self._act_count = 0
         self.act_timer.start(260)
 
     def spin(self, rounds=2):
+        if self.activity == "home":
+            self.overlay.burst("heart", 3)
+            return
         if self.activity == "sleep":
             self.wake(quiet=True, force=True)
         if self.activity is not None:
@@ -522,12 +546,133 @@ class Cat(QWidget):
                 self.overlay.burst("heart", 1)
             if n >= 10:
                 self.act_timer.stop()
+                flavor = getattr(self._food, "flavor", "tuna")
                 self._food.close()
                 self._food = None
                 self.activity = None
-                self.overlay.say(tr("say_yummy"), 2500)
-                self.overlay.burst("heart", 4)
-                self._resume()
+                self._react(flavor)
+
+    # ---------------- 表情與吃罐罐的反應 ---------------- #
+    def show_expression(self, name, ms=2500):
+        if self.direction == LEFT:
+            self._expr_side = 1
+        elif self.direction == RIGHT:
+            self._expr_side = 0
+        self.expression = name
+        self.expr_timer.start(ms)
+        self.update()
+
+    def _clear_expression(self):
+        self.expression = None
+        self.update()
+
+    def hold(self, ms, then=None):
+        """原地愣住一下（表情會顯示），之後恢復原本的模式。"""
+        self._stop_all()
+        self.activity = "hold"
+        self._hold_then = then
+        self.hold_timer.start(ms)
+        self.update()
+
+    def _end_hold(self):
+        if self.activity != "hold":
+            return
+        self.activity = None
+        then, self._hold_then = self._hold_then, None
+        if then:
+            then()
+        else:
+            self._resume()
+
+    def _react(self, flavor):
+        """不同口味的罐罐，貓咪有不同反應。"""
+        ov = self.overlay
+        if flavor == "chicken":
+            self.show_expression("happy", 3000)
+            ov.say(tr("react_chicken"), 3000)
+            ov.burst("note", 4)
+            self.hold(3000)
+        elif flavor == "salmon":
+            self.show_expression("excited", 3800)
+            ov.say(tr("react_salmon"), 3500)
+            ov.burst("sparkle", 5)
+            x, y = self.fx, self.fy
+            self.jump_to(x, y, None, then=lambda: (ov.burst("sparkle", 3), self.hold(2200)))
+            self._arc = 70
+        elif flavor == "catnip":
+            ov.say(tr("react_catnip"), 3000)
+            self._start_zoomies()
+        elif flavor == "bitter":
+            self.show_expression("yuck", 2600)
+            ov.say(tr("react_bitter"), 3000)
+            ov.burst("sweat", 2)
+            back = -1 if self._expr_side == 0 else 1
+            r = self.screen_rect()
+            tx = max(r.left(), min(r.right() - self.width(), self.x() + back * 180))
+            self.hold(1400, then=lambda: self.go_to(tx, self.y(), then=self._resume, speed=4))
+        else:   # tuna
+            self.show_expression("happy", 2500)
+            ov.say(tr("react_tuna"), 2500)
+            ov.burst("heart", 4)
+            self.hold(2500)
+
+    def _start_zoomies(self):
+        """貓薄荷：在螢幕底部瘋狂衝刺 4 秒，然後頭暈。"""
+        self._stop_all()
+        self.activity = "zoom"
+        self.perch = None
+        self.fx, self.fy = float(self.x()), float(self.y())
+        self._zoom_until = time.monotonic() + 4.0
+        self.target = None
+        self.walking = True
+        self.anim_timer.start(60)
+        self.move_timer.start(MOVE_INTERVAL)
+
+    def _zoom_step(self):
+        if time.monotonic() >= self._zoom_until:
+            self._stop_all()
+            self.activity = None
+            self.show_expression("dizzy", 2600)
+            self.overlay.say(tr("react_dizzy"), 2500)
+            self.overlay.burst("sparkle", 3)
+            self.hold(2600)
+            return
+        if self.target is None:
+            r = self.screen_rect()
+            self.target = (random.uniform(r.left(), r.right() - self.width()), self.ground_y())
+        if self._step_towards(*self.target, 15):
+            self.target = None
+
+    # ---------------- 回家 ---------------- #
+    def go_home(self, house):
+        if self.activity == "home":
+            return
+        x, y = house.door_cat_pos(self)
+        self.go_to(x, y, then=lambda: self._enter_home(house), speed=8)
+
+    def _enter_home(self, house):
+        self._stop_all()
+        self.activity = "home"
+        self.expression = None
+        self.hide()
+        house.add(self)
+
+    def _exit_home(self):
+        house = self.ctrl.house
+        house.remove(self)
+        x, y = house.door_cat_pos(self)
+        self.activity = None
+        self._move_to(x, y, clamp=False)
+        self.show()
+        self.raise_()
+
+    def leave_home(self):
+        if self.activity != "home":
+            return
+        self._exit_home()
+        self.direction = DOWN
+        self.overlay.say(tr("say_hello"), 1800)
+        self._resume()
 
     # ---------------- 滑鼠：點擊、拖曳 ---------------- #
     def mousePressEvent(self, e):
@@ -585,10 +730,14 @@ class Cat(QWidget):
     def add_own_menus(self, menu):
         menu.sub("paw", tr("mode")).choices(
             {m: tr("mode_" + m) for m in MODES}, self.mode, self.set_mode)
-        menu.sub(pixel.cat_head_icon(self.color), tr("color")).choices(
-            {c: tr("color_" + c) for c in COLORS}, self.color, self.set_color,
-            icons={c: pixel.cat_head_icon(c) for c in COLORS},
-            checked_icons={c: pixel.cat_head_icon(c, check=True) for c in COLORS})
+        colors = {c: tr("color_" + c) for c in COLORS}
+        colors.update(self.ctrl.custom_color_names())
+        cm = menu.sub(pixel.cat_head_icon(self.color), tr("color"))
+        cm.choices(colors, self.color, self.set_color,
+                   icons={c: pixel.cat_head_icon(c) for c in colors},
+                   checked_icons={c: pixel.cat_head_icon(c, check=True) for c in colors})
+        cm.addSeparator()
+        cm.item("palette", tr("palette"), lambda: self.ctrl.open_palette(self))
         menu.sub("facing", tr("facing")).choices(
             {d: tr(k) for d, k in DIRECTIONS.items()}, self.idle_direction, self.set_idle_direction)
         menu.sub("size", tr("size")).choices(
@@ -601,6 +750,8 @@ class Cat(QWidget):
         self._build_frames()
 
     def set_mode(self, mode):
+        if self.activity == "home":
+            self._exit_home()
         if self.activity == "sleep":
             self.wake(quiet=True, force=True)
         self.mode = mode
