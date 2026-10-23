@@ -319,9 +319,21 @@ def shot_flavors():
 
 
 def shot_house():
+    """左邊：沒有貓在家，門窗關著；右邊：貓咪在家，探頭、睡覺、煙囪冒煙。"""
+    import random as _r
     i18n.set_lang("en")
-    img = desktop(720, 340, seed=19)
+    W, H = 860, 340
+    img = desktop(W, H, seed=19)
     house = ctrl.house
+    house.show()
+    _r.seed(2)
+    for i in range(40):                  # 先讓花瓣飄一下
+        if i % 18 == 0:
+            house._gust()
+        house._animate()
+    flush()
+    paste(img, house.grab(), 30, H - house.height() - 6)
+    house.petals.clear()
     others = []
     for color in ("white", "black", "brown"):
         o = ctrl._spawn(ctrl.next_id, color)
@@ -331,8 +343,6 @@ def shot_house():
         house.residents.append(o)
         house.state[o] = {"slot": slot, "mode": mode, "rise": 6}
     house._tick_n = 2
-    house.show()
-    import random as _r
     _r.seed(4)
     for i in range(70):                  # 讓煙和花瓣先飄一下再拍
         if i % 9 == 0:
@@ -343,11 +353,10 @@ def shot_house():
     house.gust.stop()
     house.anim.stop()
     flush()
-    hx, hy = 330, 340 - house.height() - 6
-    paste(img, house.grab(), hx, hy)
+    paste(img, house.grab(), W - house.width() - 30, H - house.height() - 6)
     reset(cat, "orange", 1)
     cat.overlay.text = i18n.tr("go_home") + "!"
-    cat_with_overlay(img, cat, 150, 340 - cat.height() + 15 - 6 - 4 * 3)
+    cat_with_overlay(img, cat, W // 2 - cat.width() // 2 - 10, H - cat.height() + 15 - 6 - 4 * 3)
     house.hide()
     for o in others:
         house.residents.remove(o)
@@ -357,20 +366,44 @@ def shot_house():
     save(img, "house.png")
 
 
+def shot_patterns():
+    """花紋：三花、賓士、虎斑、斑點。"""
+    i18n.set_lang("en")
+    W, H = 760, 260
+    img = desktop(W, H, seed=31)
+    looks = [((245, 245, 245), (40, 140, 70), "calico", None, None),
+             ((60, 52, 56), (230, 190, 60), "tuxedo", None, None),
+             ((150, 150, 158), (60, 160, 80), "tabby", (90, 90, 100), None),
+             ((236, 170, 80), (58, 55, 55), "tabby", (186, 96, 46), None),
+             ((245, 245, 245), (80, 150, 230), "spots", (60, 52, 56), None)]
+    ids = []
+    for i, (fur, eye, pat, p1, p2) in enumerate(looks):
+        cid = ctrl.add_custom_color(fur, eye, "", pat, p1, p2)
+        ids.append(cid)
+        reset(cat, cid, (1, 2, 3, 1, 3)[i])
+        cat.overlay.text = i18n.tr("pat_" + pat)
+        cat_with_overlay(img, cat, 30 + i * 145, H - cat.height() - 10)
+    reset(cat, "orange", 1)
+    for cid in ids:
+        ctrl.delete_custom_color(cid)
+    save(img, "patterns.png")
+
+
 def shot_palette():
     i18n.set_lang("en")
-    img = desktop(640, 540, seed=23)
+    img = desktop(640, 620, seed=23)
     cid = ctrl.add_custom_color((140, 190, 230), (230, 190, 60), "Blueberry")
-    cid2 = ctrl.add_custom_color((236, 170, 190), (80, 150, 230))
+    cid2 = ctrl.add_custom_color((245, 245, 245), (80, 150, 230), "", "calico")
     reset(cat, cid, 1)
     paste(img, cat.grab(), 40, 300)
     reset(cat, cid2, 3)
     paste(img, cat.grab(), 130, 320)
     reset(cat, "orange", 1)
     ctrl.open_palette(cat)
-    ctrl.palette._pick_fur((180, 160, 220))
-    ctrl.palette._pick_eye((60, 160, 80))
-    ctrl.palette.name_edit.setText("Lavender")
+    ctrl.palette._pick_pattern("tuxedo")
+    ctrl.palette._pick_fur((80, 80, 90))
+    ctrl.palette._pick_eye((230, 190, 60))
+    ctrl.palette.name_edit.setText("Mochi")
     flush()
     paste(img, ctrl.palette.grab(), 250, 40)
     ctrl.palette.hide()
@@ -422,6 +455,7 @@ shot_windows()
 shot_picker()
 shot_flavors()
 shot_house()
+shot_patterns()
 shot_palette()
 shot_tray()
 ctrl.quit()

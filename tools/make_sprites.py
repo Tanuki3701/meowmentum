@@ -300,7 +300,20 @@ HOUSE_COLORS = {
     "G": (108, 198, 96), "g": (64, 150, 84), "j": (172, 228, 112),
     "P": (255, 132, 176), "p": (226, 88, 140), "V": (182, 146, 244), "W": (255, 255, 255),
     "O": (255, 168, 64), "S": (214, 208, 222), "s": (164, 158, 182),
+    # 關起來的玻璃窗、門
+    "U": (186, 228, 255), "u": (132, 190, 240), "v": (98, 156, 222), "X": (232, 248, 255),
+    "Z": (246, 136, 160), "z": (214, 98, 132), "N": (255, 232, 214),
 }
+DOOR_PAW = [
+    "..XX..XX..",
+    "..XX..XX..",
+    "XX......XX",
+    "XX..XX..XX",
+    "...XXXX...",
+    "..XXXXXX..",
+    "..XXXXXX..",
+    "...XXXX...",
+]
 HOUSE_W, HOUSE_H = 56, 56
 HOUSE_GROUND = 52
 # 開口（給貓咪探頭）：(x, y, w, h) 內部範圍
@@ -450,7 +463,49 @@ def house():
     bush(2, HOUSE_GROUND - 8)
     bush(HOUSE_W - 2 - len(BUSH[0]), HOUSE_GROUND - 8, flip=True)
 
-    img.save(os.path.join(SPRITES, "house.png"))
+    # 第二格：沒有貓咪在家時，門窗都關起來
+    closed = img.copy()
+    open_img = img
+    img = closed
+
+    def glass(x, y, w, h, cross=True):
+        for yy in range(h):
+            t = yy / max(1, h - 1)
+            c = "U" if t < 0.45 else ("u" if t < 0.85 else "v")
+            rect(x, y + yy, w, 1, c)
+        for k in range(-h, w):                     # 兩道斜斜的反光
+            for yy in range(h):
+                xx = k + (h - 1 - yy)
+                if 0 <= xx < w and k in (1, 2, 5):
+                    px(x + xx, y + yy, "X" if k != 5 else "U")
+        if cross:                                  # 窗格
+            rect(x + w // 2, y, 1, h, "C")
+            rect(x, y + h // 2, w, 1, "C")
+    for key in ("left", "right"):
+        glass(*HOUSE_SLOTS[key])
+    ax, ay, aw, ah = HOUSE_SLOTS["attic"]
+    glass(ax, ay, aw, ah, cross=False)
+    rect(ax + aw // 2, ay, 1, ah, "C")
+    # 門：粉紅色木門 + 奶油色肉球 + 金色門把
+    dx, dy, dw, dh = HOUSE_SLOTS["door"]
+    rect(dx, dy, dw, dh, "Z")
+    for x in range(dx + 2, dx + dw, 3):
+        rect(x, dy + 1, 1, dh - 1, "z")
+    rect(dx, dy, dw, 1, "z")
+    for y, row in enumerate(DOOR_PAW):
+        for x, ch in enumerate(row):
+            if ch != ".":
+                px(dx + 1 + x, dy + 2 + y, "N")
+    rect(dx + dw - 3, dy + 9, 2, 2, "K")
+    px(dx + dw - 3, dy + 9, "Y")
+    rect(dx - 1, HOUSE_GROUND - 1, dw + 2, 1, "M")   # 門墊（被門蓋住的部分補回來）
+    for x in range(dx, dx + dw + 1, 2):
+        px(x, HOUSE_GROUND - 1, "n")
+
+    sheet = Image.new("RGBA", (HOUSE_W * 2, HOUSE_H), (0, 0, 0, 0))
+    sheet.paste(open_img, (0, 0))
+    sheet.paste(closed, (HOUSE_W, 0))
+    sheet.save(os.path.join(SPRITES, "house.png"))
 
 
 # ---------------- App 圖示：四隻貓把臉貼在窗戶上 ---------------- #
