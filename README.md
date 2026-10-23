@@ -17,16 +17,18 @@ Meowmentum is a tiny pixel cat that lives on your macOS desktop and keeps your m
 - **Naps.** After a few idle minutes, the cat curls up and sleeps. It wakes up as soon as you come back. Choose the Sleep mode if you want the cat to keep sleeping. In Sleep mode, clicking the cat gives it a pat without waking it up.
 - **Petting.** Move the cursor back and forth over the cat, and it purrs and shows hearts.
 - **Treats with five flavors.** Drop a can from the top of the screen, and the cat runs over to eat it. Each flavor gets a different reaction. Tuna makes the cat happy, chicken makes it purr, salmon makes it jump for joy, catnip gives it the zoomies until it gets dizzy, and bitter melon makes it pull a face and walk away.
-- **Cat house.** Send one cat or every cat home. Inside, the cats take naps or peek out of the door and windows, and smoke curls up from the chimney while anyone is home. Flower bushes by the door drift little petals now and then. The house comes in small, medium, and large, and you can drag it anywhere. Right-click the house to call the cats back out.
+- **Cat house.** Send one cat or every cat home. Inside, the cats take naps or peek out of the door and windows, and smoke curls up from the chimney while anyone is home. When nobody is home, the door and windows stay closed. The windows shine like glass, and the door has a big paw print. Flower bushes by the door drift little petals now and then. The house comes in small, medium, and large, and you can drag it anywhere. Right-click the house to call the cats back out.
 - **More cats.** Adopt several cats in different colors. Each one remembers its own settings.
-- **Cat palette.** Design your own cat by picking any fur and eye color, with a live preview. Give each color its own name, or leave it blank and it is numbered automatically. Numbers stay in order with no gaps after you delete a color. Your colors appear in every cat's Color menu, and you can rename, edit, or delete them at any time.
-- **Customizable.** Choose from four coat colors, your own colors, and three sizes. Drag the cat anywhere with the left mouse button.
+- **Cat palette.** Design your own cat by picking any fur and eye color, with a live preview. Add a coat pattern too: tabby stripes, tuxedo, calico, or spots, each with its own pattern colors. Give each color its own name, or leave it blank and it is numbered automatically. Numbers stay in order with no gaps after you delete a color. Your colors appear in every cat's Color menu, and you can rename, edit, or delete them at any time.
+- **Customizable.** Choose from four coat colors, your own colors and patterns, and three sizes. Drag the cat anywhere with the left mouse button.
 
 ![Sleeping, petting, and feeding](docs/screenshots/sleep-pet-feed.png)
 
 ![Five flavors, five reactions](docs/screenshots/flavors.png)
 
 ![Cat house](docs/screenshots/house.png)
+
+![Coat patterns](docs/screenshots/patterns.png)
 
 ![Cat palette](docs/screenshots/palette.png)
 
@@ -155,34 +157,34 @@ meowmentum/
 
 #### 陪伴
 
-- **五種模式。** 待著不動、隨意漫步、跟著滑鼠、在其他 App 的視窗上走，或是睡覺。
-- **在視窗上走。** 貓咪會跳到視窗頂端散步。你拖動視窗時牠會跟著移動，視窗關掉時牠會掉下來。
-- **睡覺。** 一段時間沒碰電腦，貓咪會趴下來睡覺。你一回來牠就醒了。如果想一直看貓咪睡覺，可以選「睡覺」模式。在睡覺模式下點貓咪只會摸摸頭，不會把牠吵醒。
-- **摸摸。** 滑鼠在貓咪身上來回滑動，牠會呼嚕呼嚕並冒出愛心。
-- **五種口味的罐罐。** 天上會掉下一個罐頭，貓咪會跑過去吃。每種口味的反應都不一樣。鮪魚讓貓咪很開心，雞肉讓牠呼嚕呼嚕，鮭魚讓牠開心到跳起來，貓薄荷讓牠瘋狂衝刺到頭暈，苦瓜則會讓牠皺眉走開。
-- **貓屋。** 可以讓一隻或全部的貓回家。貓咪在家裡會睡覺，或從門窗探出頭來。有貓咪在家時煙囪會冒煙，門口兩側的花叢偶爾會飄出小花瓣。貓屋有大、中、小三種大小，可以拖到任何地方，在貓屋上按右鍵就能叫貓咪出來。
-- **多隻貓。** 可以同時養好幾隻不同顏色的貓，每隻都會記住自己的設定。
-- **貓咪調色盤。** 可以自己挑毛色和眼睛顏色，設計專屬的貓咪，還有即時預覽。每個毛色都可以取名字，沒取名的會自動編號，刪掉之後編號會重新接續，不會跳號。自訂的毛色會出現在每隻貓的「顏色」選單裡，隨時都能改名、修改或刪除。
-- **自訂外觀。** 有四種毛色、你自訂的毛色和三種大小，用滑鼠左鍵就能把貓咪拖到任何地方。
+- **五種模式：**待著不動、隨意漫步、跟著滑鼠、在其他 App 的視窗上走，或是睡覺。
+- **在視窗上走：**貓咪會跳到視窗頂端散步。你拖動視窗時牠會跟著移動，視窗關掉時牠會掉下來。
+- **睡覺：**一段時間沒碰電腦，貓咪會趴下來睡覺。你一回來牠就醒了。如果想一直看貓咪睡覺，可以選「睡覺」模式。在睡覺模式下點貓咪只會摸摸頭，不會把牠吵醒。
+- **摸摸：**滑鼠在貓咪身上來回滑動，牠會呼嚕呼嚕並冒出愛心。
+- **五種口味的罐罐：**天上會掉下一個罐頭，貓咪會跑過去吃。每種口味的反應都不一樣。鮪魚讓貓咪很開心，雞肉讓牠呼嚕呼嚕，鮭魚讓牠開心到跳起來，貓薄荷讓牠瘋狂衝刺到頭暈，苦瓜則會讓牠皺眉走開。
+- **貓屋：**可以讓一隻或全部的貓回家。貓咪在家裡會睡覺，或從門窗探出頭來。有貓咪在家時煙囪會冒煙。沒有貓咪在家時門窗都會關起來，玻璃窗會反光，大門上還有一個大大的肉球。門口兩側的花叢偶爾會飄出小花瓣。貓屋有大、中、小三種大小，可以拖到任何地方，在貓屋上按右鍵就能叫貓咪出來。
+- **多隻貓：**可以同時養好幾隻不同顏色的貓，每隻都會記住自己的設定。
+- **貓咪調色盤：**可以自己挑毛色和眼睛顏色，設計專屬的貓咪，還有即時預覽。也可以加上花紋，有虎斑、賓士、三花和斑點，每種花紋的顏色都能自己選。每個毛色都可以取名字，沒取名的會自動編號，刪掉之後編號會重新接續，不會跳號。自訂的毛色會出現在每隻貓的「顏色」選單裡，隨時都能改名、修改或刪除。
+- **自訂外觀：**有四種毛色、你自訂的毛色和花紋，以及三種大小，用滑鼠左鍵就能把貓咪拖到任何地方。
 
 #### 實用
 
-- **番茄鐘。** 可以專注 15、25 或 50 分鐘，也可以自訂時間。貓咪頭上的像素番茄會隨時間變色，一開始是黃綠色，過一半變成黃橘色，時間到了變成紅色。時間到時貓咪會走到畫面中間提醒你，接著自動開始休息。
-- **自訂專注與休息時間。** 可以用加減按鈕、方向鍵或常用時間按鈕，選 1 到 180 分鐘。最近用過的自訂時間會顯示在選擇器裡，每一個都可以刪除。設定好的休息長度會套用在之後每次專注結束時。
-- **待辦清單。** 從右鍵選單或選單列打開遊戲風格的任務欄。全部打勾時，貓咪會開心轉圈。
-- **休息提醒。** 每 30、45 或 60 分鐘提醒你伸懶腰、喝水或讓眼睛休息。你在專注或不在電腦前時不會打擾。
-- **低電量提醒。** 電量低於 20% 時，貓咪會變得懶洋洋並提醒你充電。接上電源時牠會跟你道謝。
+- **番茄鐘：**可以專注 15、25 或 50 分鐘，也可以自訂時間。貓咪頭上的像素番茄會隨時間變色，一開始是黃綠色，過一半變成黃橘色，時間到了變成紅色。時間到時貓咪會走到畫面中間提醒你，接著自動開始休息。
+- **自訂專注與休息時間：**可以用加減按鈕、方向鍵或常用時間按鈕，選 1 到 180 分鐘。最近用過的自訂時間會顯示在選擇器裡，每一個都可以刪除。設定好的休息長度會套用在之後每次專注結束時。
+- **待辦清單：**從右鍵選單或選單列打開遊戲風格的任務欄。全部打勾時，貓咪會開心轉圈。
+- **休息提醒：**每 30、45 或 60 分鐘提醒你伸懶腰、喝水或讓眼睛休息。你在專注或不在電腦前時不會打擾。
+- **低電量提醒：**電量低於 20% 時，貓咪會變得懶洋洋並提醒你充電。接上電源時牠會跟你道謝。
 
 #### 一次控制全部貓咪
 
-- **選單列圖示。** macOS 螢幕最上方的選單列會有一個小貓圖示，可以一次控制全部的貓。不用一隻一隻按右鍵，就能切換全部貓咪的模式、餵全部的貓、讓大家回家、開始番茄鐘，或打開待辦清單。
+- **選單列圖示：**macOS 螢幕最上方的選單列會有一個小貓圖示，可以一次控制全部的貓。不用一隻一隻按右鍵，就能切換全部貓咪的模式、餵全部的貓、讓大家回家、開始番茄鐘，或打開待辦清單。
 
 #### 設計
 
-- **App 圖示。** 四隻糖果色的貓咪把臉貼在窗戶上。
-- **毛玻璃選單。** 右鍵選單使用 macOS 原生的毛玻璃材質，搭配透明漸層與像素圖示，子選單會立刻展開。
-- **像素風對話框。** 對話泡泡和待辦清單都是復古遊戲風格，像素字型同時支援英文和繁體中文。
-- **中英文切換。** 隨時可以在選單裡切換語言。第一次開啟時會依照系統語言自動選擇。
+- **App 圖示：**四隻糖果色的貓咪把臉貼在窗戶上。
+- **毛玻璃選單：**右鍵選單使用 macOS 原生的毛玻璃材質，搭配透明漸層與像素圖示，子選單會立刻展開。
+- **像素風對話框：**對話泡泡和待辦清單都是復古遊戲風格，像素字型同時支援英文和繁體中文。
+- **中英文切換：**隨時可以在選單裡切換語言。第一次開啟時會依照系統語言自動選擇。
 
 ![繁體中文選單](docs/screenshots/menu-zh.png)
 
