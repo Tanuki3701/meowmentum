@@ -171,12 +171,36 @@ def shot_menu(lang, name, sub_index=None):
 
 
 def shot_pomodoro():
+    """上排：番茄從黃綠 → 黃橘 → 紅的完整變化；下排：貓咪頭上實際看到的計時泡泡。"""
+    from PIL import ImageFont
     i18n.set_lang("en")
-    img = desktop(720, 300, seed=5)
+    W, H = 760, 350
+    img = desktop(W, H, seed=5)
+    s = int(DPR)
+    font = ImageFont.truetype(os.path.join(ROOT, "assets", "fonts", "fusion-pixel.ttf"), 12 * s)
+    d = ImageDraw.Draw(img)
+    steps = [(0.0, "25:00"), (0.25, "18:45"), (0.5, "12:30"), (0.75, "06:15"), (1.0, "00:00")]
+    gap = 140
+    x0 = (W - gap * (len(steps) - 1)) // 2
+    for i, (prog, t) in enumerate(steps):
+        tom = to_pil(pixel.tomato(prog, 5))
+        cx = x0 + i * gap
+        img.alpha_composite(tom, (cx * s - tom.width // 2, 40 * s))
+        tw = d.textlength(t, font=font)
+        d.text((cx * s - tw / 2, 40 * s + tom.height + 8 * s), t, font=font, fill=(58, 55, 55))
+        if i < len(steps) - 1:                      # 像素箭頭
+            ax, ay = (cx + gap // 2) * s, 40 * s + tom.height // 2
+            u = 2 * s
+            for k in range(5):
+                d.rectangle([ax - 6 * u + k * u * 2, ay - u // 2, ax - 6 * u + k * u * 2 + u - 1, ay + u // 2],
+                            fill=(58, 55, 55))
+            for k in range(3):
+                d.rectangle([ax + 4 * u - k * u, ay - k * u - u // 2, ax + 5 * u - k * u - 1, ay + k * u + u // 2],
+                            fill=(58, 55, 55))
     for i, (prog, t) in enumerate([(0.02, "24:31"), (0.5, "12:30"), (0.97, "00:45")]):
         reset(cat, "orange", 2 if i != 1 else 1)
         cat.overlay.label = (pixel.tomato(prog, 2), t)
-        cat_with_overlay(img, cat, 60 + i * 230, 140)
+        cat_with_overlay(img, cat, 90 + i * 230, 190)
     save(img, "pomodoro.png")
 
 
@@ -305,15 +329,25 @@ def shot_house():
         others.append(o)
     for o, slot, mode in zip(others, ("left", "door", "attic"), ("peek", "peek", "sleep")):
         house.residents.append(o)
-        house.state[o] = {"slot": slot, "mode": mode, "rise": 8}
-    house._tick_n = 1
+        house.state[o] = {"slot": slot, "mode": mode, "rise": 6}
+    house._tick_n = 2
     house.show()
+    import random as _r
+    _r.seed(4)
+    for i in range(70):                  # 讓煙和花瓣先飄一下再拍
+        if i % 9 == 0:
+            house._puff()
+        if i % 22 == 0:
+            house._gust()
+        house._animate()
+    house.gust.stop()
+    house.anim.stop()
     flush()
     hx, hy = 330, 340 - house.height() - 6
     paste(img, house.grab(), hx, hy)
     reset(cat, "orange", 1)
     cat.overlay.text = i18n.tr("go_home") + "!"
-    cat_with_overlay(img, cat, 150, 340 - cat.height() + 15 - 6 - 3 * 3)
+    cat_with_overlay(img, cat, 150, 340 - cat.height() + 15 - 6 - 4 * 3)
     house.hide()
     for o in others:
         house.residents.remove(o)
@@ -325,8 +359,8 @@ def shot_house():
 
 def shot_palette():
     i18n.set_lang("en")
-    img = desktop(640, 470, seed=23)
-    cid = ctrl.add_custom_color((140, 190, 230), (230, 190, 60))
+    img = desktop(640, 540, seed=23)
+    cid = ctrl.add_custom_color((140, 190, 230), (230, 190, 60), "Blueberry")
     cid2 = ctrl.add_custom_color((236, 170, 190), (80, 150, 230))
     reset(cat, cid, 1)
     paste(img, cat.grab(), 40, 300)
@@ -336,6 +370,7 @@ def shot_palette():
     ctrl.open_palette(cat)
     ctrl.palette._pick_fur((180, 160, 220))
     ctrl.palette._pick_eye((60, 160, 80))
+    ctrl.palette.name_edit.setText("Lavender")
     flush()
     paste(img, ctrl.palette.grab(), 250, 40)
     ctrl.palette.hide()
