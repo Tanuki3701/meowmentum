@@ -208,7 +208,14 @@ class House(QWidget):
                     if d <= r:
                         c = edge if d > r - 1.0 else fill
                         p.fillRect(self._art_rect(int(round(cx)) + i, int(round(cy)) + j, 1, 1), c)
-        p.drawPixmap(MX * u, MY * u, sprites.house(u))
+        # 門窗平常關著；有貓咪待著的那一格才打開
+        p.drawPixmap(MX * u, MY * u, sprites.house(u, closed=True))
+        opened = sprites.house(u)
+        dpr = opened.devicePixelRatio()
+        for st in self.state.values():
+            x, y, w, h = sprites.HOUSE_SLOTS[st["slot"]]
+            p.drawPixmap(self._art_rect(x, y, w, h), opened,
+                         QRect(int(x * u * dpr), int(y * u * dpr), int(w * u * dpr), int(h * u * dpr)))
         for cat, st in self.state.items():
             x, y, w, h = sprites.HOUSE_SLOTS[st["slot"]]
             hole = self._art_rect(x, y, w, h)

@@ -83,8 +83,11 @@ class PixelButton(QAbstractButton):
             iw, ih = pm.width() / pm.devicePixelRatio(), pm.height() / pm.devicePixelRatio()
             p.drawPixmap(int(r.center().x() - iw / 2 + 1), int(r.center().y() - ih / 2 + 1), pm)
             return
-        fill = QColor(242, 214, 140) if hover else pixel.GOLD
-        pixel.draw_box(p, r, 2, fill=fill, light=QColor(250, 232, 180), shadow=not self.isDown())
+        if self.isChecked():
+            fill = QColor(250, 160, 120)
+        else:
+            fill = QColor(242, 214, 140) if hover else pixel.GOLD
+        pixel.draw_box(p, r, 2, fill=fill, light=QColor(250, 232, 180), shadow=not (self.isDown() or self.isChecked()))
         p.setPen(pixel.INK)
         p.setFont(self.font())
         p.drawText(r, Qt.AlignCenter, self.text())
@@ -568,6 +571,8 @@ class PaletteDialog(PixelPanel):
             (80, 80, 90), (245, 245, 245)]
     EYES = [(58, 55, 55), (60, 160, 80), (230, 190, 60), (80, 150, 230), (220, 140, 50),
             (180, 90, 50), (150, 90, 200), (200, 60, 60)]
+    PATCHES = [(246, 244, 240), (236, 218, 180), (222, 130, 60), (176, 96, 50), (110, 70, 50),
+               (150, 150, 158), (90, 90, 100), (60, 52, 56), (236, 170, 190), (140, 190, 230)]
 
     def __init__(self, ctrl):
         super().__init__()
@@ -576,6 +581,9 @@ class PaletteDialog(PixelPanel):
         self.editing = None          # 正在編輯的自訂毛色 id；None = 新增
         self.fur = self.FURS[1]
         self.eye = self.EYES[3]
+        self.pattern = "solid"
+        self.p1 = None
+        self.p2 = None
         self.setFixedWidth(self.W)
 
         lay = QVBoxLayout(self)
@@ -601,6 +609,25 @@ class PaletteDialog(PixelPanel):
 
         self.fur_label, self.fur_btns = self._swatch_row(lay, self.FURS, self._pick_fur, "fur")
         self.eye_label, self.eye_btns = self._swatch_row(lay, self.EYES, self._pick_eye, "eye")
+
+        self.pat_label = QLabel()
+        self.pat_label.setFont(pixel.font(12))
+        self.pat_label.setStyleSheet("color: #3a3737;")
+        lay.addWidget(self.pat_label)
+        prow = QHBoxLayout()
+        prow.setSpacing(4)
+        self.pat_btns = {}
+        for name in sprites.PATTERNS:
+            b = PixelButton()
+            b.setCheckable(True)
+            b.setFixedHeight(24)
+            b.clicked.connect(lambda _=False, n=name: self._pick_pattern(n))
+            prow.addWidget(b)
+            self.pat_btns[name] = b
+        prow.addStretch()
+        lay.addLayout(prow)
+        self.p1_label, self.p1_btns = self._swatch_row(lay, self.PATCHES, self._pick_p1, "p1")
+        self.p2_label, self.p2_btns = self._swatch_row(lay, self.PATCHES, self._pick_p2, "p2")
 
         self.mine_label = QLabel()
         self.mine_label.setFont(pixel.font(12))
@@ -639,6 +666,9 @@ class PaletteDialog(PixelPanel):
         more = PixelButton("...")
         more.setFixedHeight(22)
         more.clicked.connect(lambda: self._more(kind))
+        if not hasattr(self, "_more_btn"):
+            self._more_btn = {}
+        self._more_btn[kind] = more
         row.addWidget(more)
         row.addStretch()
         lay.addLayout(row)
@@ -646,11 +676,36 @@ class PaletteDialog(PixelPanel):
 
     def _more(self, kind):
         from PySide6.QtWidgets import QColorDialog
-        cur = QColor(*(self.fur if kind == "fur" else self.eye))
-        c = QColorDialog.getColor(cur, self, tr("palette"))
+        cur = {"fur": self.fur, "eye": self.eye, "p1": self._p1(), "p2": self._p2()}[kind] or (128, 128, 128)
+        c = QColorDialog.getColor(QColor(*cur), self, tr("palette"))
         if c.isValid():
-            (self._pick_fur if kind == "fur" else self._pick_eye)((c.red(), c.green(), c.blue()))
+            {"fur": self._pick_fur, "eye": self._pick_eye, "p1": self._pick_p1,
+             "p2": self._pick_p2}[kind]((c.red(), c.green(), c.blue()))
         self.raise_()
+
+    def _p1(self):
+        return self.p1 or sprites.PATTERN_DEFAULTS.get(self.pattern, (None, None))[0]
+
+    def _p2(self):
+        return self.p2 or sprites.PATTERN_DEFAULTS.get(self.pattern, (None, None))[1]
+
+    def _pick_pattern(self, name):
+        if name != self.pattern:
+            self.pattern = name
+            self.p1 = self.p2 = None         # 換花紋時回到那種花紋的預設顏色
+            if name == "calico":
+                self.fur = (245, 245, 245)
+            elif name == "tuxedo" and self.fur == (246, 244, 240):
+                self.fur = (60, 52, 56)
+        self._refresh()
+
+    def _pick_p1(self, rgb):
+        self.p1 = tuple(rgb)
+        self._refresh()
+
+    def _pick_p2(self, rgb):
+        self.p2 = tuple(rgb)
+        self._refresh()
 
     def _pick_fur(self, rgb):
         self.fur = tuple(rgb)
@@ -665,7 +720,22 @@ class PaletteDialog(PixelPanel):
             b.setChecked(b.rgb == self.fur)
         for b in self.eye_btns:
             b.setChecked(b.rgb == self.eye)
-        sp = sprites.derive_spec(self.fur, self.eye)
+        for n, b in self.pat_btns.items():
+            b.setChecked(n == self.pattern)
+        has1 = self.pattern != "solid"
+        has2 = self.pattern == "calico"
+        if has1:
+            self.p1_label.setText(tr("pattern_color_" + self.pattern))
+        for w in [self.p1_label] + self.p1_btns + [self._more_btn["p1"]]:
+            w.setVisible(has1)
+        for w in [self.p2_label] + self.p2_btns + [self._more_btn["p2"]]:
+            w.setVisible(has2)
+        for b in self.p1_btns:
+            b.setChecked(b.rgb == self._p1())
+        for b in self.p2_btns:
+            b.setChecked(b.rgb == self._p2())
+        self.adjustSize()
+        sp = sprites.derive_spec(self.fur, self.eye, self.pattern, self.p1, self.p2)
         self.preview.setPixmap(sprites.preview_image(sp, 4).copy(0, int(60 * sprites._dpr()),
                                                                  int(128 * sprites._dpr()),
                                                                  int(132 * sprites._dpr())))
@@ -709,6 +779,9 @@ class PaletteDialog(PixelPanel):
             return
         self.editing = cid
         self.fur, self.eye = tuple(c["fur"]), tuple(c["eye"])
+        self.pattern = c.get("pattern", "solid")
+        self.p1 = tuple(c["p1"]) if c.get("p1") else None
+        self.p2 = tuple(c["p2"]) if c.get("p2") else None
         self.name_edit.setText(c.get("name", ""))
         self._apply(cid)
         self.retranslate()
@@ -718,6 +791,8 @@ class PaletteDialog(PixelPanel):
     def _start_new(self):
         self.editing = None
         self.name_edit.clear()
+        self.pattern, self.p1, self.p2 = "solid", None, None
+        self._refresh()
         self.retranslate()
         self._fill_mine()
 
@@ -731,10 +806,11 @@ class PaletteDialog(PixelPanel):
 
     def _save(self):
         name = self.name_edit.text()
+        look = dict(pattern=self.pattern, p1=self._p1(), p2=self._p2())
         if self.editing and self.ctrl.custom_color(self.editing):
-            cid = self.ctrl.update_custom_color(self.editing, self.fur, self.eye, name)
+            cid = self.ctrl.update_custom_color(self.editing, self.fur, self.eye, name, **look)
         else:
-            cid = self.ctrl.add_custom_color(self.fur, self.eye, name)
+            cid = self.ctrl.add_custom_color(self.fur, self.eye, name, **look)
         self._apply(cid)
         self.hide()
 
@@ -747,6 +823,11 @@ class PaletteDialog(PixelPanel):
             self.name_edit.setPlaceholderText(self.ctrl.next_default_name())
         self.fur_label.setText(tr("fur"))
         self.eye_label.setText(tr("eyes"))
+        self.pat_label.setText(tr("pattern"))
+        for n, b in self.pat_btns.items():
+            b.setText(tr("pat_" + n))
+        self.p1_label.setText(tr("pattern_color_" + self.pattern) if self.pattern != "solid" else "")
+        self.p2_label.setText(tr("pattern_color2"))
         self.mine_label.setText(tr("my_colors_hint"))
         self.new_btn.setText(tr("new_color"))
         self.new_btn.setVisible(bool(self.editing))
@@ -757,6 +838,7 @@ class PaletteDialog(PixelPanel):
         self.target = cat
         self.editing = None
         self.name_edit.clear()
+        self.pattern, self.p1, self.p2 = "solid", None, None
         self.retranslate()
         self._fill_mine()
         self._refresh()

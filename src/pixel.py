@@ -318,7 +318,7 @@ def cat_head_icon(color, plus=False, check=False):
     """從原始精靈圖裁出貓咪正面的頭當圖示。"""
     key = ("cathead", sprites._sp_key(color), plus, check)
     if key not in _cache:
-        walk = sprites._recolor(sprites._image("base_walk.png"), sprites.spec(color))
+        walk = sprites._recolor(sprites._image("base_walk.png"), sprites.spec(color), sprites.WALK_GROUPS)
         head = walk.copy(32 + 17, 48 + 23, 12, 12)               # 側臉的頭（含耳朵）
         dpr = _dpr()
         img = QImage(int(18 * dpr), int(18 * dpr), QImage.Format_ARGB32_Premultiplied)

@@ -272,7 +272,11 @@ class Controller(QObject):
             self.custom_colors = []
         sprites.CUSTOM.clear()
         for c in self.custom_colors:
-            sprites.CUSTOM[c["id"]] = sprites.derive_spec(c["fur"], c["eye"])
+            sprites.CUSTOM[c["id"]] = self._spec_of(c)
+
+    @staticmethod
+    def _spec_of(c):
+        return sprites.derive_spec(c["fur"], c["eye"], c.get("pattern", "solid"), c.get("p1"), c.get("p2"))
 
     def _save_custom_colors(self):
         self.settings.setValue("custom_colors", json.dumps(self.custom_colors))
@@ -298,24 +302,26 @@ class Controller(QObject):
     def open_palette(self, cat):
         self.palette.open_for(cat)
 
-    def add_custom_color(self, fur, eye, name=""):
+    def add_custom_color(self, fur, eye, name="", pattern="solid", p1=None, p2=None):
         used = {c["id"] for c in self.custom_colors}
         k = 1
         while f"custom{k}" in used:
             k += 1
         cid = f"custom{k}"
-        self.custom_colors.append({"id": cid, "fur": list(fur), "eye": list(eye),
-                                   "name": name.strip()})
-        sprites.CUSTOM[cid] = sprites.derive_spec(fur, eye)
+        c = {"id": cid, "fur": list(fur), "eye": list(eye), "name": name.strip(),
+             "pattern": pattern, "p1": list(p1) if p1 else None, "p2": list(p2) if p2 else None}
+        self.custom_colors.append(c)
+        sprites.CUSTOM[cid] = self._spec_of(c)
         self._save_custom_colors()
         return cid
 
-    def update_custom_color(self, cid, fur, eye, name=""):
+    def update_custom_color(self, cid, fur, eye, name="", pattern="solid", p1=None, p2=None):
         c = self.custom_color(cid)
         if not c:
-            return self.add_custom_color(fur, eye, name)
-        c.update(fur=list(fur), eye=list(eye), name=name.strip())
-        sprites.CUSTOM[cid] = sprites.derive_spec(fur, eye)
+            return self.add_custom_color(fur, eye, name, pattern, p1, p2)
+        c.update(fur=list(fur), eye=list(eye), name=name.strip(), pattern=pattern,
+                 p1=list(p1) if p1 else None, p2=list(p2) if p2 else None)
+        sprites.CUSTOM[cid] = self._spec_of(c)
         self._save_custom_colors()
         for cat in self.cats:
             if cat.color == cid:

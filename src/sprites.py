@@ -47,6 +47,13 @@ SLOT_ORDER = ["door", "left", "right", "attic"]
 
 _cache = {}
 
+# 花紋分組：(格子們, 是否左右鏡像)。走路圖第 0 列背面、1 右、2 正面、3 左（左 = 右的鏡像）
+WALK_GROUPS = [([(f * FRAME_W, d * FRAME_H, FRAME_W, FRAME_H) for f in range(FRAMES_PER_DIR)], d == 3)
+               for d in range(4)]
+SLEEP_GROUPS = [([(i * FRAME_W, 0, FRAME_W, FRAME_H) for i in range(2)], False)]
+EXPR_GROUPS = [([(i * FRAME_W, 0, FRAME_W, FRAME_H)], False) for i in range(len(EXPRESSIONS))]
+FACE_GROUPS = [([(0, 0, 16, 14)], False), ([(16, 0, 10, 8)], False), ([(26, 0, 6, 5)], False)]
+
 
 def resource_path(*parts):
     """同時支援直接執行原始碼與 PyInstaller 打包後的 .app。"""
@@ -76,8 +83,32 @@ def _shift(rgb, dl=0.0, ds=0.0, dh=0.0):
     return int(r * 255), int(g * 255), int(b * 255)
 
 
-def derive_spec(fur, eye=None):
-    """從一個毛色（和眼睛顏色）推出整組像素調色盤。"""
+PATTERNS = ["solid", "tabby", "tuxedo", "calico", "spots"]
+PATTERN_DEFAULTS = {          # 花紋的預設顏色（p1、p2）
+    "tabby": ((110, 70, 50), None),
+    "tuxedo": ((246, 244, 240), None),
+    "calico": ((222, 130, 60), (60, 52, 56)),
+    "spots": ((60, 52, 56), None),
+}
+
+
+def derive_spec(fur, eye=None, pattern="solid", p1=None, p2=None):
+    """從一個毛色（和眼睛顏色、花紋）推出整組像素調色盤。"""
+    sp = _derive_base(fur, eye)
+    if pattern in PATTERN_DEFAULTS:
+        d1, d2 = PATTERN_DEFAULTS[pattern]
+        p1 = tuple(p1) if p1 else d1
+        p2 = tuple(p2) if p2 else d2
+        sp["pattern"] = pattern
+        sp["A"], sp["a"] = p1, _shift(p1, 0.08, 0.02)
+        if pattern == "tabby":                 # 條紋：同一個顏色，不用亮面
+            sp["a"] = p1
+        if p2:
+            sp["B"], sp["b"] = p2, _shift(p2, 0.08, 0.02)
+    return sp
+
+
+def _derive_base(fur, eye=None):
     fur = tuple(fur)
     light = _shift(fur, 0.10, 0.02)
     dark = _shift(fur, -0.24, 0.0, -0.01)
@@ -93,15 +124,86 @@ def spec(color):
     return BUILTIN.get(color) or CUSTOM.get(color) or BUILTIN["orange"]
 
 
-def _recolor(img, sp):
+def _recolor(img, sp, groups=None):
     out = QImage(img)            # 複製一份，換掉調色盤
     table = [0]
     for ch in SEM[1:]:
         rgb = (255, 255, 255) if ch == "W" else sp[ch]
         table.append(QColor(*rgb).rgba())
-    table += [0] * (out.colorCount() - len(table))
-    out.setColorTable(table)
+    for ch in "AaBb":            # 花紋用的額外顏色（索引 10~13）
+        table.append(QColor(*sp.get(ch, sp["M"])).rgba())
+    if sp.get("pattern") and groups:
+        out = _apply_pattern(out, sp["pattern"], groups)
+    table += [0] * (max(out.colorCount(), 256) - len(table))
+    out.setColorTable(table[:max(out.colorCount(), 256)])
     return out
+
+
+# ---------------- 花紋 ---------------- #
+_M, _L = SEM.index("M"), SEM.index("L")
+_A, _Aa, _B, _Bb = 10, 11, 12, 13
+
+
+def _noise(x, y, g, salt):
+    """平滑的數值雜訊（0~1），同一組座標永遠得到同一個值，花紋才不會閃。"""
+    def h(i, j):
+        n = (i * 374761393 + j * 668265263 + salt * 2246822519) & 0xFFFFFFFF
+        n = ((n ^ (n >> 13)) * 1274126177) & 0xFFFFFFFF
+        return ((n ^ (n >> 16)) & 0xFFFF) / 65535
+    gx, gy = x / g, y / g
+    i, j = int(gx // 1), int(gy // 1)
+    fx, fy = gx - i, gy - j
+    fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
+    top = h(i, j) * (1 - fx) + h(i + 1, j) * fx
+    bot = h(i, j + 1) * (1 - fx) + h(i + 1, j + 1) * fx
+    return top * (1 - fy) + bot * fy
+
+
+def _apply_pattern(img, pattern, groups):
+    """groups：[(rects, mirror)]；同一組的格子（同方向的走路格）共用同一套花紋座標。"""
+    img = img.convertToFormat(QImage.Format_Indexed8, img.colorTable()) \
+        if img.format() != QImage.Format_Indexed8 else QImage(img)
+    for rects, mirror in groups:
+        # 每一欄毛的上下範圍（取同組所有格子的聯集，走路時花紋才不會跳）
+        w = max(r[2] for r in rects)
+        top, bot = [99] * w, [-1] * w
+        for rx, ry, rw, rh in rects:
+            for x in range(rw):
+                for y in range(rh):
+                    if img.pixelIndex(rx + x, ry + y) in (_M, _L):
+                        top[x] = min(top[x], y)
+                        bot[x] = max(bot[x], y)
+        for rx, ry, rw, rh in rects:
+            for x in range(rw):
+                if bot[x] < 0:
+                    continue
+                span = max(1, bot[x] - top[x])
+                nx = (rw - 1 - x) if mirror else x
+                for y in range(rh):
+                    idx = img.pixelIndex(rx + x, ry + y)
+                    if idx not in (_M, _L):
+                        continue
+                    v = (y - top[x]) / span          # 0 = 這一欄最上面，1 = 最下面（肚子、腳）
+                    light = idx == _L
+                    new = None
+                    if pattern == "tuxedo":
+                        if v > 0.58:
+                            new = _Aa if light else _A
+                    elif pattern == "tabby":
+                        if v < 0.72 and (nx + y // 3) % 3 == 0:
+                            new = _A
+                    elif pattern == "calico":
+                        if v < 0.7:
+                            if _noise(nx, y, 5.0, 7) > 0.56:
+                                new = _Aa if light else _A
+                            elif _noise(nx, y, 4.5, 19) > 0.6:
+                                new = _Bb if light else _B
+                    elif pattern == "spots":
+                        if _noise(nx, y, 4.0, 31) > 0.62:
+                            new = _Aa if light else _A
+                    if new is not None:
+                        img.setPixel(rx + x, ry + y, new)
+    return img
 
 
 def _scaled(img, scale):
@@ -122,7 +224,7 @@ def cat_frames(color, scale):
     key = ("cat", _sp_key(color), scale)
     if key not in _cache:
         sp = spec(color)
-        walk_img = _recolor(_image("base_walk.png"), sp)
+        walk_img = _recolor(_image("base_walk.png"), sp, WALK_GROUPS)
         walk = [[_scaled(walk_img.copy(f * FRAME_W, d * FRAME_H, FRAME_W, FRAME_H), scale)
                  for f in range(FRAMES_PER_DIR)] for d in range(4)]
         mirror = QTransform().scale(-1, 1)
@@ -132,8 +234,8 @@ def cat_frames(color, scale):
             return [[_scaled(x, scale) for x in right],
                     [_scaled(x.transformed(mirror), scale) for x in right]]
 
-        sleep = both(_recolor(_image("base_sleep.png"), sp), 2)
-        ex = both(_recolor(_image("base_expr.png"), sp), len(EXPRESSIONS))
+        sleep = both(_recolor(_image("base_sleep.png"), sp, SLEEP_GROUPS), 2)
+        ex = both(_recolor(_image("base_expr.png"), sp, EXPR_GROUPS), len(EXPRESSIONS))
         expr = {name: [ex[0][i], ex[1][i]] for i, name in enumerate(EXPRESSIONS)}
         _cache[key] = {"walk": walk, "sleep": sleep, "expr": expr}
     return _cache[key]
@@ -144,14 +246,14 @@ def face(color, kind="face", scale=1.0):
     key = ("face", _sp_key(color), kind, scale)
     if key not in _cache:
         x, w, h = {"face": (0, 16, 14), "peek": (16, 10, 8), "paw": (26, 6, 5)}[kind]
-        img = _recolor(_image("base_face.png"), spec(color)).copy(x, 0, w, h)
+        img = _recolor(_image("base_face.png"), spec(color), FACE_GROUPS).copy(x, 0, w, h)
         _cache[key] = _scaled(img, scale)
     return _cache[key]
 
 
 def preview_image(sp, scale):
     """調色盤預覽：直接用一組顏色畫出側面站姿。"""
-    img = _recolor(_image("base_walk.png"), sp).copy(FRAME_W, FRAME_H, FRAME_W, FRAME_H)
+    img = _recolor(_image("base_walk.png"), sp, WALK_GROUPS).copy(FRAME_W, FRAME_H, FRAME_W, FRAME_H)
     return _scaled(img, scale)
 
 
@@ -164,8 +266,10 @@ def effect(kind, scale):
     return _cache[key]
 
 
-def house(scale):
-    key = ("house", scale)
+def house(scale, closed=False):
+    """貓屋：第一格門窗打開（有貓咪在家），第二格門窗關著。"""
+    key = ("house", scale, closed)
     if key not in _cache:
-        _cache[key] = _scaled(_image("house.png"), scale)
+        img = _image("house.png")
+        _cache[key] = _scaled(img.copy(HOUSE_W if closed else 0, 0, HOUSE_W, HOUSE_H), scale)
     return _cache[key]
