@@ -257,6 +257,20 @@ def shot_hero():
     save(img, "hero.png")
 
 
+def shot_picker():
+    i18n.set_lang("en")
+    img = desktop(620, 330, seed=13)
+    reset(cat, "orange", 1)
+    cat.overlay.label = (pixel.tomato(0.15, 2), "37:00")
+    cat_with_overlay(img, cat, 50, 160)
+    ctrl.custom_focus = 37
+    ctrl.picker.open("focus", cat)
+    flush()
+    paste(img, ctrl.picker.grab(), 260, 70)
+    ctrl.picker.hide()
+    save(img, "custom-time.png")
+
+
 shot_hero()
 shot_menu("en", "menu-en.png", sub_index=1)
 shot_menu("zh", "menu-zh.png")
@@ -264,4 +278,5 @@ shot_pomodoro()
 shot_todo()
 shot_sleep_pet_feed()
 shot_windows()
+shot_picker()
 ctrl.quit()
