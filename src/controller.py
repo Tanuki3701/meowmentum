@@ -5,25 +5,20 @@ import shutil
 import time
 
 from PySide6.QtCore import QObject, QPoint, QProcess, QRect, QSettings, Qt, QTimer
-from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtGui import QCursor, QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication
 
+import i18n
 import macos
-from cat import COLORS, Cat, add_choices
+import pixel
+from cat import COLORS, Cat
+from i18n import tr
 from macos import show_on_all_spaces
 from panels import Food, TodoPanel
 
 PULSE_INTERVAL = 400        # 背景輕量檢查：閒置時間、滑鼠是否在貓咪身上
 PET_INTERVAL = 50           # 滑鼠在貓咪身上時，才開始密集偵測「摸摸」
 BATTERY_INTERVAL = 120_000  # 每 2 分鐘看一次電量
-
-REMINDERS = [
-    "站起來伸個懶腰吧～",
-    "喝口水吧 💧",
-    "眼睛休息一下，看看遠方 👀",
-    "肩膀放鬆，深呼吸～",
-    "坐太久了，起來走走吧 🚶",
-]
 
 
 def _subtract(intervals, cut):
@@ -46,6 +41,7 @@ class Controller(QObject):
         self.settings = QSettings("DesktopCat", "DesktopCat")
         s = self.settings
         self.tired = False
+        i18n.set_lang(str(s.value("lang", "") or i18n.system_default()))
 
         # ---- 貓咪們 ----
         self.cats = []
@@ -59,6 +55,7 @@ class Controller(QObject):
         # ---- 番茄鐘 ----
         self.pomo_phase = None
         self.pomo_end = 0.0
+        self.pomo_total = 1.0
         self.pomo_timer = self._timer(self._pomo_tick, 1000)
 
         # ---- 休息提醒 ----
@@ -125,7 +122,7 @@ class Controller(QObject):
         cat = self._spawn(cid, random.choice(choices), near)
         cat.set_mode(near.mode)
         self._save_ids()
-        cat.overlay.say("喵！我來了～", 2500)
+        cat.overlay.say(tr("say_hello"), 2500)
 
     def remove_cat(self, cat):
         if len(self.cats) <= 1:
@@ -139,54 +136,70 @@ class Controller(QObject):
 
     # ---------------- 選單 ---------------- #
     def build_menu(self, cat, menu):
-        pomo = menu.addMenu(self._pomo_title())
+        pomo = menu.sub(QIcon(pixel.tomato(self._pomo_progress() if self.pomo_phase == "focus" else 1.0, pixel.MENU_UNIT)),
+                        self._pomo_title())
         if self.pomo_phase:
-            pomo.addAction("停止番茄鐘").triggered.connect(self.stop_pomodoro)
+            pomo.item("power", tr("pomo_stop"), self.stop_pomodoro)
             pomo.addSeparator()
         for m in (15, 25, 50):
-            pomo.addAction(f"專注 {m} 分鐘").triggered.connect(lambda _=False, m=m: self.start_focus(m))
-        pomo.addAction("休息 5 分鐘").triggered.connect(lambda: self.start_break(5))
+            pomo.item(None, tr("focus_n", m=m), lambda m=m: self.start_focus(m)).setIcon(pixel.blank_icon())
+        pomo.item("cup", tr("break_n", m=5), lambda: self.start_break(5))
 
-        menu.addAction("📝 待辦清單").triggered.connect(lambda: self.toggle_todo(cat))
-        menu.addAction("🥫 餵罐罐").triggered.connect(lambda: self.feed(cat))
+        menu.item("note", tr("todo"), lambda: self.toggle_todo(cat))
+        menu.item("can", tr("feed"), lambda: self.feed(cat))
         menu.addSeparator()
         cat.add_own_menus(menu)
         menu.addSeparator()
-        menu.addAction("🐈 多一隻貓").triggered.connect(lambda: self.add_cat(cat))
+        menu.item(pixel.cat_head_icon("orange", plus=True), tr("add_cat"), lambda: self.add_cat(cat))
         if len(self.cats) > 1:
-            menu.addAction("👋 讓這隻貓回家").triggered.connect(lambda: self.remove_cat(cat))
-        settings = menu.addMenu("⚙️ 設定")
-        add_choices(settings.addMenu("休息提醒"),
-                    {0: "關閉", 30: "每 30 分鐘", 45: "每 45 分鐘", 60: "每 60 分鐘"},
-                    self.remind_min, self.set_remind)
-        add_choices(settings.addMenu("閒置多久會睡覺"),
-                    {0: "不睡覺", 1: "1 分鐘", 3: "3 分鐘", 5: "5 分鐘", 10: "10 分鐘"},
-                    self.sleep_min, self.set_sleep_min)
-        batt = settings.addAction("低電量提醒")
-        batt.setCheckable(True)
-        batt.setChecked(self.battery_alert)
-        batt.toggled.connect(self.set_battery_alert)
+            menu.item("home", tr("remove_cat"), lambda: self.remove_cat(cat))
+        settings = menu.sub("gear", tr("settings"))
+        settings.sub(pixel.blank_icon(), tr("remind")).choices(
+            {0: tr("off"), 30: tr("every_n", m=30), 45: tr("every_n", m=45), 60: tr("every_n", m=60)},
+            self.remind_min, self.set_remind)
+        settings.sub(pixel.blank_icon(), tr("nap_after")).choices(
+            {0: tr("never"), 1: tr("n_min", m=1), 3: tr("n_min", m=3), 5: tr("n_min", m=5),
+             10: tr("n_min", m=10)}, self.sleep_min, self.set_sleep_min)
+        settings.item("check" if self.battery_alert else None, tr("battery_alert"),
+                      lambda: self.set_battery_alert(not self.battery_alert))
+        if not self.battery_alert:
+            settings.actions()[-1].setIcon(pixel.blank_icon())
+        menu.sub("globe", tr("language")).choices(i18n.LANGS, i18n.lang(), self.set_language)
         menu.addSeparator()
-        menu.addAction("結束").triggered.connect(self.quit)
+        menu.item("power", tr("quit"), self.quit)
+
+    def set_language(self, lang):
+        i18n.set_lang(lang)
+        self.settings.setValue("lang", lang)
+        self.todo.retranslate()
 
     # ---------------- 番茄鐘 ---------------- #
+    def _pomo_left(self):
+        return max(0, int(self.pomo_end - time.monotonic() + 0.999))
+
+    def _pomo_progress(self):
+        if self.pomo_phase != "focus":
+            return 0.0
+        return 1.0 - (self.pomo_end - time.monotonic()) / self.pomo_total
+
     def _pomo_title(self):
         if not self.pomo_phase:
-            return "🍅 番茄鐘"
-        left = max(0, int(self.pomo_end - time.monotonic()))
-        name = "專注中" if self.pomo_phase == "focus" else "休息中"
-        return f"🍅 番茄鐘（{name} {left // 60:02d}:{left % 60:02d}）"
+            return tr("pomodoro")
+        left = self._pomo_left()
+        key = "pomo_focus_left" if self.pomo_phase == "focus" else "pomo_break_left"
+        return tr(key, t=f"{left // 60:02d}:{left % 60:02d}")
 
     def start_focus(self, minutes):
         self._start_phase("focus", minutes)
-        self.main_cat.overlay.say(f"開始專注 {minutes} 分鐘！加油 💪", 3000)
+        self.main_cat.overlay.say(tr("say_focus", m=minutes), 3000)
 
     def start_break(self, minutes):
         self._start_phase("break", minutes)
 
     def _start_phase(self, phase, minutes):
         self.pomo_phase = phase
-        self.pomo_end = time.monotonic() + minutes * 60
+        self.pomo_total = minutes * 60
+        self.pomo_end = time.monotonic() + self.pomo_total
         self.pomo_timer.start()
         self._pomo_tick()
 
@@ -196,13 +209,15 @@ class Controller(QObject):
         self.main_cat.overlay.set_label(None)
 
     def _pomo_tick(self):
-        left = self.pomo_end - time.monotonic()
-        if left <= 0:
+        if self.pomo_end - time.monotonic() <= 0:
             self._pomo_finish()
             return
-        left = int(left + 0.999)
-        icon = "🍅" if self.pomo_phase == "focus" else "☕"
-        self.main_cat.overlay.set_label(f"{icon} {left // 60:02d}:{left % 60:02d}")
+        left = self._pomo_left()
+        if self.pomo_phase == "focus":
+            icon = pixel.tomato(self._pomo_progress(), 2)   # 黃綠 → 黃橘 → 紅
+        else:
+            icon = pixel.icon_pixmap("cup", 2)
+        self.main_cat.overlay.set_label((icon, f"{left // 60:02d}:{left % 60:02d}"))
 
     def _pomo_finish(self):
         cat = self.main_cat
@@ -213,14 +228,14 @@ class Controller(QObject):
 
             def arrived():
                 cat.spin(2)
-                cat.overlay.say("專注結束！休息 5 分鐘吧 ☕", 6000)
+                cat.overlay.say(tr("say_focus_done"), 6000)
                 cat.overlay.burst("heart", 4)
 
             cat.go_to(x, cat.ground_y(), then=arrived)
         else:
             self.stop_pomodoro()
             cat.wake(quiet=True)
-            cat.overlay.say("休息結束，繼續加油！🍅", 5000)
+            cat.overlay.say(tr("say_break_done"), 5000)
             cat.spin(1)
 
     # ---------------- 待辦清單 ---------------- #
@@ -231,7 +246,7 @@ class Controller(QObject):
         for c in self.cats:
             c.spin(2)
             c.overlay.burst("heart", 5)
-        self.main_cat.overlay.say("全部完成！好厲害 🎉", 4000)
+        self.main_cat.overlay.say(tr("say_all_done"), 4000)
 
     # ---------------- 休息提醒 ---------------- #
     def set_remind(self, minutes):
@@ -249,7 +264,7 @@ class Controller(QObject):
         if self.sleeping or self.pomo_phase == "focus":
             return  # 人不在電腦前，或正在專注，就不打擾
         cat = self.main_cat
-        cat.overlay.say(random.choice(REMINDERS), 8000)
+        cat.overlay.say(random.choice(tr("say_remind")), 8000)
         cat.overlay.burst("heart", 2)
 
     # ---------------- 睡覺 & 摸摸 ---------------- #
@@ -345,21 +360,21 @@ class Controller(QObject):
         cat = self.main_cat
         if prev is None:
             if tired:
-                cat.overlay.say(f"電量只剩 {pct}%…好睏 🪫", 6000)
+                cat.overlay.say(tr("say_batt_low", p=pct), 6000)
             return
         p_pct, p_ac = prev
         if on_ac and not p_ac:
-            cat.overlay.say("謝謝你幫我充電～ ⚡", 3500)
+            cat.overlay.say(tr("say_batt_thanks"), 3500)
             cat.overlay.burst("heart", 3)
         elif not on_ac and ((pct <= 20 < p_pct) or (pct <= 10 < p_pct)):
-            cat.overlay.say(f"電量只剩 {pct}%…好睏，快充電 🪫", 6000)
+            cat.overlay.say(tr("say_batt_low", p=pct), 6000)
 
     # ---------------- 餵食 ---------------- #
     def feed(self, cat):
         r = cat.screen_rect()
         x = cat.center_x() + random.choice((-1, 1)) * random.randint(150, 400)
         x = max(r.left() + 60, min(r.right() - 60, x))
-        cat.overlay.say("罐罐！？", 1500)
+        cat.overlay.say(tr("say_can"), 1500)
 
         def landed(food):
             if cat not in self.cats:

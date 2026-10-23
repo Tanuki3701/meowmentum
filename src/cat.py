@@ -9,19 +9,22 @@
 import random
 
 from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCursor, QGuiApplication, QPainter
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtGui import QCursor, QGuiApplication, QPainter
+from PySide6.QtWidgets import QWidget
 
+import pixel
 import sprites
+from glassmenu import GlassMenu
+from i18n import tr
 from overlay import Overlay
 
 STAND_FRAME = 1
 UP, RIGHT, DOWN, LEFT = 0, 1, 2, 3
 
-COLORS = {"black": "黑貓", "white": "白貓", "orange": "橘貓", "brown": "棕貓"}
-MODES = {"idle": "待著不動", "random": "隨意漫步", "follow": "跟著滑鼠", "windows": "在視窗上走"}
-DIRECTIONS = {DOWN: "面向前", LEFT: "面向左", RIGHT: "面向右", UP: "背對"}
-SIZES = {2: "小", 3: "中", 4: "大"}
+COLORS = ["orange", "black", "white", "brown"]
+MODES = ["idle", "random", "follow", "windows"]
+DIRECTIONS = {DOWN: "dir_down", LEFT: "dir_left", RIGHT: "dir_right", UP: "dir_up"}
+SIZES = [2, 3, 4]
 
 MOVE_INTERVAL = 33       # 移動中約 30fps
 ANIM_INTERVAL = 150      # 走路動畫換格速度
@@ -31,15 +34,6 @@ WANDER_SPEED = 4
 FOLLOW_MAX_SPEED = 10
 FOLLOW_DISTANCE = 50
 REST_MS = (2000, 7000)
-
-
-def add_choices(submenu, options, current, handler):
-    group = QActionGroup(submenu)
-    for value, label in options.items():
-        act = QAction(label, submenu, checkable=True, checked=(value == current))
-        act.triggered.connect(lambda _=False, v=value: handler(v))
-        group.addAction(act)
-        submenu.addAction(act)
 
 
 class Cat(QWidget):
@@ -487,13 +481,13 @@ class Cat(QWidget):
         self.frame = STAND_FRAME
         self.update()
         if not quiet:
-            self.overlay.say("喵～ 早安！", 2000)
+            self.overlay.say(tr("say_morning"), 2000)
         self._resume()
 
     def petted(self):
         self.overlay.burst("heart", 3)
         if self.activity != "sleep":
-            self.overlay.say(random.choice(["呼嚕呼嚕～", "喵～ ❤", "好舒服～"]), 1800)
+            self.overlay.say(random.choice(tr("say_pet")), 1800)
 
     def _act_step(self):
         self._act_count += 1
@@ -528,7 +522,7 @@ class Cat(QWidget):
                 self._food.close()
                 self._food = None
                 self.activity = None
-                self.overlay.say("好吃！謝謝～", 2500)
+                self.overlay.say(tr("say_yummy"), 2500)
                 self.overlay.burst("heart", 4)
                 self._resume()
 
@@ -578,16 +572,21 @@ class Cat(QWidget):
             self.ctrl.toggle_todo(self)
 
     def contextMenuEvent(self, e):
-        menu = QMenu(self)
+        menu = GlassMenu()
         self.ctrl.build_menu(self, menu)
         menu.exec(e.globalPos())
 
     def add_own_menus(self, menu):
-        add_choices(menu.addMenu("模式"), MODES, self.mode, self.set_mode)
-        add_choices(menu.addMenu("顏色"), COLORS, self.color, self.set_color)
-        add_choices(menu.addMenu("待著時的方向"), DIRECTIONS, self.idle_direction,
-                    self.set_idle_direction)
-        add_choices(menu.addMenu("大小"), SIZES, self.scale, self.set_scale)
+        menu.sub("paw", tr("mode")).choices(
+            {m: tr("mode_" + m) for m in MODES}, self.mode, self.set_mode)
+        menu.sub(pixel.cat_head_icon(self.color), tr("color")).choices(
+            {c: tr("color_" + c) for c in COLORS}, self.color, self.set_color,
+            icons={c: pixel.cat_head_icon(c) for c in COLORS},
+            checked_icons={c: pixel.cat_head_icon(c, check=True) for c in COLORS})
+        menu.sub("facing", tr("facing")).choices(
+            {d: tr(k) for d, k in DIRECTIONS.items()}, self.idle_direction, self.set_idle_direction)
+        menu.sub("size", tr("size")).choices(
+            {z: tr(f"size_{z}") for z in SIZES}, self.scale, self.set_scale)
 
     # ---------------- 設定變更 ---------------- #
     def set_color(self, color):

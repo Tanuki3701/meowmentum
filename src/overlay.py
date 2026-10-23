@@ -1,23 +1,25 @@
-"""貓咪頭上的小視窗：對話泡泡、番茄鐘倒數、愛心和 Zzz 特效。
+"""貓咪頭上的小視窗：像素風對話框、番茄鐘倒數、愛心和 Zzz 特效。
 
 這個視窗完全不接收滑鼠（點擊會穿過去），而且只有在有東西要顯示時才出現。
 """
 import random
 
-from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QRect, Qt, QTimer
+from PySide6.QtGui import QFontMetrics, QPainter
 from PySide6.QtWidgets import QWidget
 
+import pixel
 import sprites
 from macos import show_on_all_spaces
 
-INK = QColor(58, 55, 55)        # 和貓咪外框同色
-PAPER = QColor(255, 252, 244)
-FX_INTERVAL = 140               # 特效動畫間隔（只在有特效時跑）
+FX_INTERVAL = 140   # 特效動畫間隔（只在有特效時跑）
+U = 2               # 對話框的像素單位
+PAD = 9
+MAX_TEXT_W = 250
 
 
 class Overlay(QWidget):
-    W, H = 280, 170
+    W, H = 300, 190
 
     def __init__(self, cat):
         super().__init__(None)
@@ -31,9 +33,11 @@ class Overlay(QWidget):
         self.setFixedSize(self.W, self.H)
 
         self.text = None
-        self.label = None
-        self.effects = []  # [kind, x, y, 剩餘步數]
+        self.label = None          # (pixmap, 文字)，例如番茄 + 倒數
+        self.effects = []          # [kind, x, y, 剩餘步數]
         self._spaces_done = False
+        self.font = pixel.font(12)
+        self.fm = QFontMetrics(self.font)
 
         self.text_timer = QTimer(self)
         self.text_timer.setSingleShot(True)
@@ -43,36 +47,25 @@ class Overlay(QWidget):
         self.fx_timer.setInterval(FX_INTERVAL)
         self.fx_timer.timeout.connect(self._step_effects)
 
-        self.font = QFont()
-        self.font.setPointSize(13)
-        self.font.setBold(True)
-
     # ---------------- 對外 API ---------------- #
     def say(self, text, ms=4500):
         self.text = text
         self.text_timer.start(ms)
         self._refresh()
 
-    def set_label(self, text):
-        if text != self.label:
-            self.label = text
-            self._refresh()
+    def set_label(self, label):
+        self.label = label
+        self._refresh()
 
     def burst(self, kind="heart", n=3):
-        cx = self.W / 2
-        base = self._head_y()
-        for i in range(n):
-            self.effects.append([kind, cx + random.uniform(-40, 40), base - random.uniform(0, 12),
-                                 random.randint(7, 10)])
-        if not self.fx_timer.isActive():
-            self.fx_timer.start()
-        self._refresh()
+        for _ in range(n):
+            self.effects.append([kind, self.W / 2 + random.uniform(-40, 40),
+                                 self.H - 14 - random.uniform(0, 12), random.randint(7, 10)])
+        self._start_fx()
 
     def zzz(self):
-        self.effects.append(["zzz", self.W / 2 + 30, self._head_y(), 9])
-        if not self.fx_timer.isActive():
-            self.fx_timer.start()
-        self._refresh()
+        self.effects.append(["zzz", self.W / 2 + 30, self.H - 14, 9])
+        self._start_fx()
 
     def follow(self):
         if self.isVisible():
@@ -81,8 +74,10 @@ class Overlay(QWidget):
                       c.y() + c.content_top() - self.H + 4)
 
     # ---------------- 內部 ---------------- #
-    def _head_y(self):
-        return self.H - 14
+    def _start_fx(self):
+        if not self.fx_timer.isActive():
+            self.fx_timer.start()
+        self._refresh()
 
     def _clear_text(self):
         self.text = None
@@ -114,32 +109,49 @@ class Overlay(QWidget):
             self.hide()
         self.update()
 
+    def _layout(self):
+        """算出對話框大小與各行位置。"""
+        rows = []
+        if self.label:
+            pm, t = self.label
+            iw = pm.width() / pm.devicePixelRatio()
+            ih = pm.height() / pm.devicePixelRatio()
+            rows.append(("label", int(iw + 6 + self.fm.horizontalAdvance(t)), int(max(ih, self.fm.height()))))
+        if self.text:
+            r = self.fm.boundingRect(QRect(0, 0, MAX_TEXT_W, 400), Qt.TextWordWrap, self.text)
+            rows.append(("text", r.width(), r.height()))
+        if not rows:
+            return None, rows
+        w = max(r[1] for r in rows) + PAD * 2 + U * 2
+        h = sum(r[2] for r in rows) + 4 * (len(rows) - 1) + PAD * 2 - 2
+        w += w % U
+        h += h % U
+        box = QRect((self.W - w) // 2 // U * U, self.H - h - 14, w, h)
+        return box, rows
+
     def paintEvent(self, _e):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        lines = [t for t in (self.label, self.text) if t]
+        box, rows = self._layout()
         lift = 0
-        if lines:
+        if box:
+            pixel.draw_box(p, box, U)
+            pixel.draw_tail(p, self.W // 2 // U * U, box.bottom() + 1 - U, U)
             p.setFont(self.font)
-            fm = QFontMetrics(self.font)
-            tw = max(fm.horizontalAdvance(t) for t in lines) + 24
-            th = fm.height() * len(lines) + 14
-            tw = min(tw, self.W - 8)
-            r = QRectF((self.W - tw) / 2, self.H - th - 12, tw, th)
-            path = QPainterPath()
-            path.addRoundedRect(r, 10, 10)
-            tail = QPainterPath()
-            cx = self.W / 2
-            tail.moveTo(cx - 7, r.bottom() - 1)
-            tail.lineTo(cx, r.bottom() + 9)
-            tail.lineTo(cx + 7, r.bottom() - 1)
-            path = path.united(tail)
-            p.setPen(QPen(INK, 2))
-            p.setBrush(PAPER)
-            p.drawPath(path)
-            p.setPen(INK)
-            p.drawText(r, Qt.AlignCenter, "\n".join(lines))
-            lift = th + 8  # 有泡泡時，特效從泡泡上方飄出
+            p.setPen(pixel.INK)
+            y = box.top() + PAD
+            for kind, w, h in rows:
+                x = box.left() + (box.width() - w) // 2
+                if kind == "label":
+                    pm, t = self.label
+                    ih = pm.height() / pm.devicePixelRatio()
+                    p.drawPixmap(x, int(y + (h - ih) / 2), pm)
+                    tx = x + int(pm.width() / pm.devicePixelRatio()) + 6
+                    p.drawText(QRect(tx, y, w, h), Qt.AlignVCenter | Qt.AlignLeft, t)
+                else:
+                    p.drawText(QRect(box.left() + PAD, y, box.width() - 2 * PAD, h),
+                               Qt.AlignCenter | Qt.TextWordWrap, self.text)
+                y += h + 4
+            lift = box.height() + 8
         scale = max(2, self.cat.scale - 1)
         for kind, x, y, _ in self.effects:
             pm = sprites.effect(kind, scale)

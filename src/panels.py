@@ -1,76 +1,247 @@
-"""待辦清單面板與罐罐。"""
+"""像素風待辦清單（RPG 任務欄）與罐罐。"""
 import json
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QRect, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
+                               QVBoxLayout, QWidget)
 
+import pixel
 import sprites
+from i18n import tr
 from macos import show_on_all_spaces
 
-NOTE_STYLE = """
-QWidget#note { background: #fff6dd; border: 2px solid #3a3737; border-radius: 12px; }
-QLabel { color: #3a3737; font-weight: bold; font-size: 15px; }
-QListWidget { background: transparent; border: none; color: #3a3737; font-size: 14px; }
-QListWidget::item { padding: 3px 2px; }
-QLineEdit { background: #fffdf7; border: 1px solid #c9b98f; border-radius: 6px;
-            padding: 4px 6px; color: #3a3737; font-size: 13px; }
-QPushButton { background: transparent; border: none; color: #996b4a; font-size: 12px; }
-QPushButton:hover { color: #3a3737; }
-"""
+U = 3            # 外框像素單位
+TITLE_H = 34
+MAX_ROWS = 8
+ROW_H = 26
+
+CHECK_OFF = [
+    "KKKKKKKKK",
+    "KWWWWWWWK",
+    "KWCCCCCCK",
+    "KWCCCCCCK",
+    "KWCCCCCCK",
+    "KWCCCCCCK",
+    "KWCCCCCCK",
+    "KWCCCCCCK",
+    "KKKKKKKKK",
+]
+CHECK_ON = [
+    "KKKKKKKKK..",
+    "KWWWWWWWK.G",
+    "KWCCCCCCKGg",
+    "KWCCCCCGGg.",
+    "KWGCCCGGgK.",
+    "KWGGCGGgCK.",
+    "KWCGGGgCCK.",
+    "KWCCGgCCCK.",
+    "KKKKKKKKKK.",
+]
+
+
+def _style_line_edit(edit):
+    fam = pixel.font_family()
+    edit.setFont(pixel.font(12))
+    edit.setStyleSheet(
+        "QLineEdit { background: #fffdf5; color: #3a3737; border: 2px solid #3a3737;"
+        " padding: 4px 6px; selection-background-color: #e9c878; selection-color: #3a3737;"
+        f" font-family: '{fam}'; font-size: 12px; }}")
+
+
+class PixelButton(QAbstractButton):
+    """遊戲風按鈕：像素框，按下時往下沉一格。"""
+
+    def __init__(self, text="", icon=None, parent=None, flat=False):
+        super().__init__(parent)
+        self.setText(text)
+        self._icon = icon
+        self._flat = flat
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFont(pixel.font(12))
+
+    def sizeHint(self):
+        if self._icon is not None:
+            return QSize(22, 22)
+        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 20, 24)
+
+    def enterEvent(self, e):
+        self.update()
+
+    def leaveEvent(self, e):
+        self.update()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        down = 2 if self.isDown() else 0
+        r = self.rect().adjusted(0, down, -2, -2 + down)
+        hover = self.underMouse()
+        if self._icon is not None:
+            if hover or self.isDown():
+                pixel.draw_box(p, r, 2, fill=pixel.GOLD, light=None, shadow=False)
+            pm = self._icon
+            iw, ih = pm.width() / pm.devicePixelRatio(), pm.height() / pm.devicePixelRatio()
+            p.drawPixmap(int(r.center().x() - iw / 2 + 1), int(r.center().y() - ih / 2 + 1), pm)
+            return
+        fill = QColor(242, 214, 140) if hover else pixel.GOLD
+        pixel.draw_box(p, r, 2, fill=fill, light=QColor(250, 232, 180), shadow=not self.isDown())
+        p.setPen(pixel.INK)
+        p.setFont(self.font())
+        p.drawText(r, Qt.AlignCenter, self.text())
+
+
+class TodoRow(QWidget):
+    def __init__(self, panel, text, done):
+        super().__init__()
+        self.panel = panel
+        self.text = text
+        self.done = done
+        self.setFixedHeight(ROW_H)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFont(pixel.font(12))
+        self._hover = False
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def _delete_rect(self):
+        return QRect(self.width() - 22, (ROW_H - 14) // 2, 14, 14)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return
+        if self._delete_rect().contains(e.position().toPoint()):
+            self.panel.remove_row(self)
+        else:
+            self.done = not self.done
+            self.update()
+            self.panel.changed()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        if self._hover:
+            p.fillRect(self.rect().adjusted(0, 1, 0, -1), QColor(244, 226, 178, 150))
+        grid = CHECK_ON if self.done else CHECK_OFF
+        box = pixel._grid_pixmap(grid, 2, size=(11, 9))
+        p.drawPixmap(4, (ROW_H - 18) // 2, box)
+        f = pixel.font(12)
+        f.setStrikeOut(self.done)
+        p.setFont(f)
+        p.setPen(QColor(150, 140, 130) if self.done else pixel.INK)
+        p.drawText(QRect(32, 0, self.width() - 60, ROW_H), Qt.AlignVCenter | Qt.AlignLeft,
+                   self.fontMetrics().elidedText(self.text, Qt.ElideRight, self.width() - 60))
+        if self._hover:
+            p.drawPixmap(self._delete_rect().topLeft(), pixel.icon_pixmap("close", 2, (7, 7)))
 
 
 class TodoPanel(QWidget):
+    W = 290
+
     def __init__(self, ctrl):
         super().__init__(None)
         self.ctrl = ctrl
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)
-        self.setFixedWidth(260)
+        self.setFixedWidth(self.W)
+        self._drag = None
 
-        note = QWidget(self)
-        note.setObjectName("note")
-        note.setStyleSheet(NOTE_STYLE)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(note)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(U * 2 + 8, U + 6, U * 2 + 8 + U, U * 2 + 10 + U)
+        lay.setSpacing(6)
 
-        lay = QVBoxLayout(note)
-        lay.setContentsMargins(14, 10, 14, 10)
         head = QHBoxLayout()
-        head.addWidget(QLabel("📝 今天要做的事"))
+        head.setSpacing(6)
+        icon = QLabel()
+        icon.setPixmap(pixel.icon_pixmap("note", 2))
+        head.addWidget(icon)
+        self.title = QLabel()
+        self.title.setFont(pixel.font(12))
+        self.title.setStyleSheet("color: #3a3737;")
+        head.addWidget(self.title)
         head.addStretch()
-        close = QPushButton("✕")
+        close = PixelButton(icon=pixel.icon_pixmap("close", 2, (7, 7)))
         close.clicked.connect(self.hide)
         head.addWidget(close)
-        lay.addLayout(head)
+        head_box = QWidget()
+        head_box.setFixedHeight(TITLE_H - U - 6)
+        head_box.setLayout(head)
+        head.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(head_box)
+        lay.addSpacing(4)
 
-        self.list = QListWidget()
-        self.list.setMinimumHeight(140)
-        self.list.itemChanged.connect(self._changed)
-        lay.addWidget(self.list)
+        self.rows_box = QWidget()
+        self.rows_lay = QVBoxLayout(self.rows_box)
+        self.rows_lay.setContentsMargins(0, 0, 0, 0)
+        self.rows_lay.setSpacing(0)
+        self.rows_lay.addStretch()
+        self.scroll = QScrollArea()
+        self.scroll.setWidget(self.rows_box)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setStyleSheet(
+            "QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }"
+            "QScrollBar:vertical { width: 6px; background: transparent; margin: 0; }"
+            "QScrollBar::handle:vertical { background: #c9a865; min-height: 20px; }"
+            "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }")
+        lay.addWidget(self.scroll)
+
+        self.empty = QLabel()
+        self.empty.setFont(pixel.font(12))
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.empty.setStyleSheet("color: #a8957a;")
+        self.empty.setFixedHeight(ROW_H * 2)
+        lay.addWidget(self.empty)
 
         self.entry = QLineEdit()
-        self.entry.setPlaceholderText("新增事項，按 Enter")
+        _style_line_edit(self.entry)
         self.entry.returnPressed.connect(self._add)
         lay.addWidget(self.entry)
 
         foot = QHBoxLayout()
         self.count = QLabel()
-        self.count.setStyleSheet("font-size: 12px; font-weight: normal;")
+        self.count.setFont(pixel.font(12))
+        self.count.setStyleSheet("color: #7a6a58;")
         foot.addWidget(self.count)
         foot.addStretch()
-        clear = QPushButton("清除已完成")
-        clear.clicked.connect(self._clear_done)
-        foot.addWidget(clear)
+        self.clear_btn = PixelButton()
+        self.clear_btn.clicked.connect(self._clear_done)
+        foot.addWidget(self.clear_btn)
         lay.addLayout(foot)
 
         self._loading = False
         self._all_done = False
         self._load()
+        self.retranslate()
+
+    # ---------------- 外觀 ---------------- #
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        r = self.rect().adjusted(0, 0, -U, -U)
+        pixel.draw_box(p, r, U)
+        band = QRect(r.left() + U, r.top() + U, r.width() - 2 * U, TITLE_H - U)
+        p.fillRect(band, pixel.GOLD)
+        p.fillRect(QRect(band.left(), band.top(), band.width(), U), QColor(248, 224, 160))
+        p.fillRect(QRect(band.left(), band.bottom() + 1, band.width(), U), pixel.INK)
+
+    def retranslate(self):
+        self.title.setText(tr("todo_title"))
+        self.entry.setPlaceholderText(tr("todo_add"))
+        self.clear_btn.setText(tr("todo_clear"))
+        self.clear_btn.updateGeometry()
+        self._update_count()
 
     # ---------------- 資料 ---------------- #
+    def _rows(self):
+        return [self.rows_lay.itemAt(i).widget() for i in range(self.rows_lay.count() - 1)]
+
     def _load(self):
         self._loading = True
         try:
@@ -81,28 +252,32 @@ class TodoPanel(QWidget):
             self._append(it.get("t", ""), it.get("d", False))
         self._loading = False
         self._all_done = self._is_all_done()
-        self._update_count()
+        self._resize()
 
     def _save(self):
-        items = [{"t": self.list.item(i).text(),
-                  "d": self.list.item(i).checkState() == Qt.Checked}
-                 for i in range(self.list.count())]
+        items = [{"t": r.text, "d": r.done} for r in self._rows()]
         self.ctrl.settings.setValue("todos", json.dumps(items, ensure_ascii=False))
 
     def _append(self, text, done=False):
-        item = QListWidgetItem(text)
-        item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
-        item.setCheckState(Qt.Checked if done else Qt.Unchecked)
-        self.list.addItem(item)
+        row = TodoRow(self, text, done)
+        self.rows_lay.insertWidget(self.rows_lay.count() - 1, row)
 
     def _is_all_done(self):
-        n = self.list.count()
-        return n > 0 and all(self.list.item(i).checkState() == Qt.Checked for i in range(n))
+        rows = self._rows()
+        return bool(rows) and all(r.done for r in rows)
 
     def _update_count(self):
-        n = self.list.count()
-        done = sum(self.list.item(i).checkState() == Qt.Checked for i in range(n))
-        self.count.setText(f"完成 {done} / {n}" if n else "還沒有事項")
+        rows = self._rows()
+        self.count.setText(tr("todo_count", d=sum(r.done for r in rows), n=len(rows)))
+        self.empty.setText(tr("todo_empty"))
+
+    def _resize(self):
+        n = len(self._rows())
+        self.scroll.setVisible(n > 0)
+        self.empty.setVisible(n == 0)
+        self.scroll.setFixedHeight(min(n, MAX_ROWS) * ROW_H + 2)
+        self._update_count()
+        self.adjustSize()
 
     # ---------------- 事件 ---------------- #
     def _add(self):
@@ -110,15 +285,26 @@ class TodoPanel(QWidget):
         if text:
             self._append(text)
             self.entry.clear()
-            self._changed()
+            self._resize()
+            QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(
+                self.scroll.verticalScrollBar().maximum()))
+            self.changed()
+
+    def remove_row(self, row):
+        row.setParent(None)
+        row.deleteLater()
+        self._resize()
+        self.changed()
 
     def _clear_done(self):
-        for i in reversed(range(self.list.count())):
-            if self.list.item(i).checkState() == Qt.Checked:
-                self.list.takeItem(i)
-        self._changed()
+        for r in self._rows():
+            if r.done:
+                r.setParent(None)
+                r.deleteLater()
+        self._resize()
+        self.changed()
 
-    def _changed(self, *_):
+    def changed(self):
         if self._loading:
             return
         self._save()
@@ -128,14 +314,20 @@ class TodoPanel(QWidget):
             self.ctrl.celebrate()
         self._all_done = all_done
 
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and e.position().y() < TITLE_H:
+            self._drag = e.globalPosition().toPoint() - self.pos()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is not None:
+            self.move(e.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
             self.hide()
-        elif e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.list.hasFocus():
-            row = self.list.currentRow()
-            if row >= 0:
-                self.list.takeItem(row)
-                self._changed()
         else:
             super().keyPressEvent(e)
 
@@ -143,7 +335,7 @@ class TodoPanel(QWidget):
         if self.isVisible():
             self.hide()
             return
-        self.adjustSize()
+        self._resize()
         screen = cat.screen_rect()
         x = cat.x() + cat.width() + 8
         if x + self.width() > screen.right():
@@ -198,5 +390,4 @@ class Food(QWidget):
         self.move(self.x(), int(self.fy))
 
     def paintEvent(self, _e):
-        from PySide6.QtGui import QPainter
         QPainter(self).drawPixmap(0, 0, self.pm)

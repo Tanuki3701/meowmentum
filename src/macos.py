@@ -153,3 +153,72 @@ def list_windows():
         if arr:
             _cf.CFRelease(arr)
     return result
+
+
+# ---------------- 毛玻璃（NSVisualEffectView）---------------- #
+class _NSRect(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double),
+                ("w", ctypes.c_double), ("h", ctypes.c_double)]
+
+
+class _NSEdgeInsets(ctypes.Structure):
+    _fields_ = [("top", ctypes.c_double), ("left", ctypes.c_double),
+                ("bottom", ctypes.c_double), ("right", ctypes.c_double)]
+
+
+GLASS_AVAILABLE = bool(_objc)
+
+
+def _nsstring(text):
+    cls = _objc.objc_getClass(b"NSString")
+    return ctypes.c_void_p(_send(ctypes.c_void_p, cls, b"stringWithUTF8String:",
+                                 ctypes.c_char_p(text.encode("utf-8"))))
+
+
+def apply_glass(widget, mask_path, radius):
+    """在視窗後面放一層系統毛玻璃（和系統選單同一種材質），回傳是否成功。
+
+    mask_path：圓角遮罩 PNG（用 capInsets 做九宮格延展）。
+    """
+    if not _objc:
+        return False
+    try:
+        ns_view = ctypes.c_void_p(int(widget.winId()))
+        ns_window = _send(ctypes.c_void_p, ns_view, b"window")
+        if not ns_window:
+            return False
+        ns_window = ctypes.c_void_p(ns_window)
+        content = ctypes.c_void_p(_send(ctypes.c_void_p, ns_window, b"contentView"))
+        frame_view = ctypes.c_void_p(_send(ctypes.c_void_p, content, b"superview"))
+        if not frame_view.value:
+            return False
+
+        cls = _objc.objc_getClass(b"NSVisualEffectView")
+        vev = ctypes.c_void_p(_send(ctypes.c_void_p, cls, b"alloc"))
+        rect = _NSRect(0, 0, float(widget.width()), float(widget.height()))
+        vev = ctypes.c_void_p(_send(ctypes.c_void_p, vev, b"initWithFrame:", rect))
+        _send(None, vev, b"setMaterial:", ctypes.c_long(5))          # Menu
+        _send(None, vev, b"setBlendingMode:", ctypes.c_long(0))      # BehindWindow
+        _send(None, vev, b"setState:", ctypes.c_long(1))             # Active
+        _send(None, vev, b"setAutoresizingMask:", ctypes.c_ulong(18))
+
+        appearance_cls = _objc.objc_getClass(b"NSAppearance")
+        light = _send(ctypes.c_void_p, appearance_cls, b"appearanceNamed:",
+                      _nsstring("NSAppearanceNameAqua"))
+        if light:
+            _send(None, vev, b"setAppearance:", ctypes.c_void_p(light))
+
+        img_cls = _objc.objc_getClass(b"NSImage")
+        img = ctypes.c_void_p(_send(ctypes.c_void_p, img_cls, b"alloc"))
+        img = ctypes.c_void_p(_send(ctypes.c_void_p, img, b"initWithContentsOfFile:",
+                                    _nsstring(mask_path)))
+        if img.value:
+            r = float(radius)
+            _send(None, img, b"setCapInsets:", _NSEdgeInsets(r, r, r, r))
+            _send(None, vev, b"setMaskImage:", img)
+
+        _send(None, frame_view, b"addSubview:positioned:relativeTo:", vev,
+              ctypes.c_long(-1), content)                             # NSWindowBelow
+        return True
+    except Exception:
+        return False
