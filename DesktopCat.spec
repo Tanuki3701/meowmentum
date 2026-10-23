@@ -26,6 +26,6 @@ app = BUNDLE(
     info_plist={
         "LSUIElement": True,              # 不顯示 Dock 圖示
         "NSHighResolutionCapable": True,  # Retina 清晰顯示
-        "CFBundleShortVersionString": "2.0.0",
+        "CFBundleShortVersionString": "3.0.0",
     },
 )

@@ -19,6 +19,7 @@ echo "▶ 打包中…"
 
 DEST="/Applications"
 [ -w "$DEST" ] || { DEST="$HOME/Applications"; mkdir -p "$DEST"; }
+pkill -x DesktopCat 2>/dev/null && sleep 1   # 先關掉正在跑的舊版
 rm -rf "$DEST/DesktopCat.app"
 cp -R dist/DesktopCat.app "$DEST/"
 rm -rf build dist
