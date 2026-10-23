@@ -1,8 +1,8 @@
 """貓屋：貓咪可以回家睡覺，或從門窗探出頭來。
 
-動態：門口兩側的花叢偶爾飄出幾片小花瓣；有貓咪在家時，煙囪會冒煙。
-省電：沒有東西在動的時候完全不跑動畫計時器。花瓣每隔幾秒才飄一陣，
-飄完就停；煙只有在有貓咪在家時才會冒。
+動態：煙囪一直冒著淡淡的煙；門口兩側的花叢偶爾飄出幾片小花瓣。
+省電：貓屋收起來時完全不跑計時器；顯示時動畫只畫這個小視窗，
+每格之間的計時器都是 CoarseTimer，讓系統可以合併喚醒。
 """
 import math
 import random
@@ -54,6 +54,10 @@ class House(QWidget):
         self.anim.setTimerType(Qt.CoarseTimer)
         self.anim.setInterval(FRAME_MS)
         self.anim.timeout.connect(self._animate)
+        self.smoke_timer = QTimer(self)          # 煙囪一直都有煙：每隔一下冒一朵
+        self.smoke_timer.setTimerType(Qt.CoarseTimer)
+        self.smoke_timer.setInterval(1100)
+        self.smoke_timer.timeout.connect(self._smoke_tick)
         self.gust = QTimer(self)                 # 每隔幾秒飄一陣花瓣
         self.gust.setSingleShot(True)
         self.gust.setTimerType(Qt.VeryCoarseTimer)
@@ -74,6 +78,8 @@ class House(QWidget):
                 show_on_all_spaces(self)
                 self._spaces_done = True
             self._schedule_gust(800)
+            self.smoke_timer.start()
+            self._smoke_tick()
         self.ctrl.settings.setValue("house_visible", "1")
 
     def hide_house(self):
@@ -81,6 +87,7 @@ class House(QWidget):
             self.ctrl.come_out()
         self.hide()
         self.gust.stop()
+        self.smoke_timer.stop()
         self.anim.stop()
         self.petals.clear()
         self.smoke.clear()
@@ -118,7 +125,6 @@ class House(QWidget):
         self.state[cat] = {"slot": slot, "mode": "peek", "rise": 0}
         self.show_house()
         self.timer.start()
-        self._puff()
         self.anim.start()
         self.update()
 
@@ -132,6 +138,12 @@ class House(QWidget):
 
     def _tick(self):
         """冒一朵煙；偶爾換一下：有的貓去睡覺，有的探出頭來看看。"""
+        self.residents = [c for c in self.residents if c.activity == "home"]   # 保險：只算真的在家的貓
+        self.state = {c: st for c, st in self.state.items() if c in self.residents}
+        if not self.residents:
+            self.timer.stop()
+            self.update()
+            return
         self._tick_n += 1
         self._puff()
         if self._tick_n % 2 == 0:
@@ -148,6 +160,10 @@ class House(QWidget):
         if len(self.smoke) < 8:
             life = random.randint(34, 42)
             self.smoke.append([CHIMNEY[0] + random.uniform(-0.6, 0.6), CHIMNEY[1], 1.2, life, life])
+
+    def _smoke_tick(self):
+        self._puff()
+        self.anim.start()
 
     def _schedule_gust(self, ms=None):
         if self.isVisible():

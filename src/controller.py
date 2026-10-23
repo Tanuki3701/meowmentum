@@ -258,6 +258,21 @@ class Controller(QObject):
         else:
             self.house.show_house()
 
+    # ---------------- Dock ---------------- #
+    def dock_span(self, cat):
+        """「在 Dock 上走」模式：貓咪視窗左上角 x 可以走的範圍。"""
+        screen = QGuiApplication.screenAt(cat.geometry().center()) or QGuiApplication.primaryScreen()
+        g = screen.geometry()
+        left, right = g.left(), g.right() + 1
+        info = macos.dock_info()
+        if (screen == QGuiApplication.primaryScreen() and info["orientation"] == "bottom"
+                and info["width"]):
+            w = min(info["width"], g.width())
+            left = g.center().x() - w / 2
+            right = left + w
+        pad = 16
+        return (left + pad - cat.width() / 2, max(left + pad, right - pad) - cat.width() / 2)
+
     # ---------------- 自訂毛色 ---------------- #
     def _load_list(self, key):
         try:

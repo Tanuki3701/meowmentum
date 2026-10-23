@@ -222,3 +222,42 @@ def apply_glass(widget, mask_path, radius):
         return True
     except Exception:
         return False
+
+
+_dock_cache = {"t": -1e9, "info": None}
+
+
+def dock_info():
+    """估算 Dock 的大小（讀 com.apple.dock 偏好設定；不需要任何權限）。
+
+    回傳 dict(orientation, autohide, width)；width 是 Dock 底座的寬度（點）。
+    結果快取 20 秒，只有「在 Dock 上走」模式會用到。
+    """
+    import subprocess
+    import time
+    now = time.monotonic()
+    if now - _dock_cache["t"] < 20 and _dock_cache["info"]:
+        return _dock_cache["info"]
+    info = {"orientation": "bottom", "autohide": False, "width": None}
+    if IS_MAC:
+        def read(key):
+            try:
+                return subprocess.run(["/usr/bin/defaults", "read", "com.apple.dock", key],
+                                      capture_output=True, text=True, timeout=2).stdout.strip()
+            except Exception:
+                return ""
+        try:
+            tile = float(read("tilesize") or 48)
+        except ValueError:
+            tile = 48.0
+        info["orientation"] = read("orientation") or "bottom"
+        info["autohide"] = read("autohide") == "1"
+        apps = read("persistent-apps").count("tile-data") + 1          # + Finder
+        others = read("persistent-others").count("tile-data") + 1      # + 垃圾桶
+        recents = read("recent-apps").count("tile-data") if read("show-recents") != "0" else 0
+        seps = 1 + (1 if recents else 0)
+        pitch = tile * 1.03
+        icons = apps + others + recents
+        info["width"] = (icons - 1) * pitch + seps * pitch * 0.8 + tile * 1.1
+    _dock_cache.update(t=now, info=info)
+    return info

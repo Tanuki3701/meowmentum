@@ -45,6 +45,7 @@ S = {
     "mode_random":     {"en": "Wander",                 "zh": "隨意漫步"},
     "mode_follow":     {"en": "Follow the cursor",      "zh": "跟著滑鼠"},
     "mode_windows":    {"en": "Walk on windows",        "zh": "在視窗上走"},
+    "mode_dock":       {"en": "Walk on the Dock",       "zh": "在 Dock 上走"},
     "mode_sleep":      {"en": "Sleep",                  "zh": "睡覺"},
     "color_black":     {"en": "Black",                  "zh": "黑貓"},
     "color_white":     {"en": "White",                  "zh": "白貓"},

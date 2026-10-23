@@ -23,7 +23,7 @@ STAND_FRAME = 1
 UP, RIGHT, DOWN, LEFT = 0, 1, 2, 3
 
 COLORS = ["orange", "black", "white", "brown"]
-MODES = ["idle", "random", "follow", "windows", "sleep"]
+MODES = ["idle", "random", "follow", "windows", "dock", "sleep"]
 DIRECTIONS = {DOWN: "dir_down", LEFT: "dir_left", RIGHT: "dir_right", UP: "dir_up"}
 SIZES = [2, 3, 4]
 
@@ -219,6 +219,11 @@ class Cat(QWidget):
         elif self.mode == "windows":
             self._set_walking(False)
             self.rest_timer.start(600)
+        elif self.mode == "dock":
+            if self._on_ground():
+                self._dock_next()
+            else:
+                self.start_fall()
         elif self.mode == "sleep":
             self.sleep()
         self.update()
@@ -233,6 +238,14 @@ class Cat(QWidget):
             self._start_wandering()
         elif self.mode == "windows":
             self._windows_next()
+        elif self.mode == "dock":
+            self._dock_next()
+
+    def _dock_next(self):
+        """在 Dock 上來回散步：每次走到 Dock 範圍內的隨機一點，休息一下再走。"""
+        a, b = self.ctrl.dock_span(self)
+        self.target = (random.uniform(a, b), self.ground_y())
+        self._set_walking(True)
 
     def _start_wandering(self):
         r = self.screen_rect()
@@ -254,7 +267,7 @@ class Cat(QWidget):
         elif a == "zoom":
             self._zoom_step()
         elif a is None:
-            if self.mode == "random":
+            if self.mode in ("random", "dock"):
                 self._wander_step()
             elif self.mode == "follow":
                 self._follow_step()
@@ -708,7 +721,7 @@ class Cat(QWidget):
             x, _ = self._clamp(self.x(), self.y())
             self._move_to(x, self.y(), clamp=False)
             self.save_pos()
-            if self.mode == "windows":
+            if self.mode in ("windows", "dock"):
                 self.start_fall()
             else:
                 self._move_to(*self._clamp(self.x(), self.y()))
@@ -795,6 +808,7 @@ class Cat(QWidget):
 
     def dispose(self):
         self._stop_all()
+        self.ctrl.house.remove(self)          # 在家裡被送走的貓也要離開貓屋（不然煙囪會一直冒煙）
         if getattr(self, "_food", None):
             self._food.close()
         self.overlay.close()
