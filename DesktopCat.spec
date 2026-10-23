@@ -4,7 +4,7 @@
 a = Analysis(
     ["src/main.py"],
     pathex=["src"],
-    datas=[("assets/sprites", "assets/sprites")],
+    datas=[("assets/sprites", "assets/sprites"), ("assets/fonts", "assets/fonts")],
     excludes=["tkinter", "unittest", "pydoc", "PySide6.QtNetwork", "PySide6.QtQml",
               "PySide6.QtQuick", "PySide6.QtWebEngineCore", "PySide6.QtMultimedia"],
 )
@@ -26,6 +26,6 @@ app = BUNDLE(
     info_plist={
         "LSUIElement": True,              # 不顯示 Dock 圖示
         "NSHighResolutionCapable": True,  # Retina 清晰顯示
-        "CFBundleShortVersionString": "3.0.0",
+        "CFBundleShortVersionString": "3.1.0",
     },
 )

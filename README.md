@@ -1,44 +1,63 @@
-# 🐱 Desktop Cat
+# Desktop Cat
 
-一隻住在 macOS 桌面上的像素小貓。牠會散步、跟著滑鼠、跳到視窗上走、陪你專注、提醒你休息，沒事做的時候就趴著睡覺。
+A tiny pixel cat that lives on your macOS desktop. It wanders around, follows your cursor, hops onto your windows, keeps you company while you focus, and takes a nap when you step away.
 
-![orange cat](assets/icon.png)
+[繁體中文說明](#繁體中文)
 
-## 功能
+![Desktop Cat](docs/screenshots/hero.png)
 
-### 🐾 陪伴
-- **四種模式**：待著不動／隨意漫步／跟著滑鼠／**在視窗上走**（會跳到其他 App 視窗頂端散步；拖動視窗牠會跟著移動，視窗關掉牠就掉下來）
-- **睡覺**：一段時間沒碰電腦，貓咪會趴下來打瞌睡、冒出 Zzz；你一回來牠就醒了
-- **摸摸**：滑鼠在貓咪身上來回滑動，會呼嚕呼嚕冒愛心
-- **餵罐罐**：天上掉下一個罐頭，貓咪跑過去吃
-- **多隻貓**：最多可以同時養好幾隻不同顏色的貓
-- 四種毛色（黑、白、橘、棕）、三種大小，用滑鼠左鍵按住可以拖曳
+## Features
 
-### 🛠 實用
-- **番茄鐘**：專注 15／25／50 分鐘，倒數顯示在貓咪頭上；時間到貓咪會走到畫面中間轉圈提醒，接著自動進入 5 分鐘休息
-- **待辦清單**：點一下貓咪就會打開小便條，全部打勾時貓咪會開心轉圈
-- **休息提醒**：每 30／45／60 分鐘提醒你伸懶腰、喝水、讓眼睛休息（專注中或你不在時不打擾）
-- **電量提醒**：筆電電量低於 20% 時貓咪會變得懶洋洋、提醒你充電；接上電源會跟你道謝
+### Companion
 
-所有設定都在貓咪身上**按右鍵**（觸控板雙指點按），也會記住你上次的設定和貓咪位置。
+- **Four modes.** The cat can stay put, wander, follow your cursor, or walk on top of other apps' windows.
+- **Walk on windows.** The cat jumps onto window title bars and strolls along them. It rides along when you drag a window, and it falls down when the window closes.
+- **Naps.** After a few idle minutes, the cat curls up and sleeps. It wakes up as soon as you come back.
+- **Petting.** Move the cursor back and forth over the cat, and it purrs and shows hearts.
+- **Treats.** Drop a can of food from the top of the screen, and the cat runs over to eat it.
+- **More cats.** Adopt several cats in different colors. Each one remembers its own settings.
+- **Customizable.** Choose from four coat colors and three sizes. Drag the cat anywhere with the left mouse button.
 
-## 省電設計
+![Sleeping, petting, and feeding](docs/screenshots/sleep-pet-feed.png)
 
-| 項目 | 做法 |
+![Walking on windows](docs/screenshots/walk-on-windows.png)
+
+### Productivity
+
+- **Pomodoro timer.** Focus for 15, 25, or 50 minutes. A pixel tomato above the cat ripens as time passes. It starts yellow-green, turns yellow-orange halfway, and becomes red when time is up. Then the cat walks to the middle of the screen to remind you, and a 5-minute break starts.
+- **To-do list.** Click the cat to open a game-style quest log. When every quest is checked, the cat spins with joy.
+- **Break reminders.** Every 30, 45, or 60 minutes, the cat reminds you to stretch, drink water, or rest your eyes. It stays quiet while you focus or when you are away.
+- **Low battery alerts.** Below 20% battery, the cat gets sleepy and asks you to charge. When you plug in, it thanks you.
+
+![Pomodoro tomato changes color over time](docs/screenshots/pomodoro.png)
+
+![To-do list](docs/screenshots/todo.png)
+
+### Design
+
+- **Glass menu.** The right-click menu uses the native macOS frosted-glass material with a soft transparent gradient and pixel-art icons. Submenus open instantly.
+- **Pixel-art dialogs.** Speech bubbles and the to-do list look like a retro game, with a pixel font that supports both English and Traditional Chinese.
+- **English and Traditional Chinese.** Switch languages any time from the menu. The first launch follows your system language.
+
+![Glass menu in English](docs/screenshots/menu-en.png)
+
+## Battery-friendly by design
+
+| Area | How it saves power |
 | --- | --- |
-| 視窗 | 每隻貓的視窗只有貓咪大小，移動時幾乎不需重繪（舊版是 1920×1080 的透明全螢幕視窗） |
-| 計時器 | 需要時才開：待著不動時不動畫；移動中 30fps；走到定點會休息 |
-| 背景檢查 | 只有每 0.4 秒一次的輕量檢查（有沒有在用電腦、滑鼠是否在貓咪身上） |
-| 睡覺 | 睡著時只剩每秒一次的呼吸動畫 |
-| 圖片 | 啟動時一次切好、放大並快取 |
-| 電量 | 每 2 分鐘才讀一次；沒電時貓咪動作會放慢 |
-| 視窗偵測 | 只在「在視窗上走」模式讀取視窗位置，不讀取視窗內容（不需要螢幕錄製權限） |
+| Windows | Each cat is a window exactly the size of the cat, so moving it costs almost nothing. |
+| Timers | Timers run only when needed. Movement is 30 fps, and cats rest between walks. |
+| Background checks | One light check every 0.4 seconds detects idle time and petting. |
+| Sleeping | A sleeping cat only breathes once per second. |
+| Images | Sprites are cut, scaled, and cached once at startup. |
+| Battery | The battery is read once every 2 minutes. |
+| Window detection | Window positions are read only in "Walk on windows" mode. Window contents are never read, so no screen-recording permission is needed. |
 
-## 安裝
+## Install
 
-需要 macOS 與 Python 3.9 以上（沒有的話先在終端機執行 `xcode-select --install`）。
+You need macOS and Python 3.9 or later. If you do not have Python, run `xcode-select --install` in Terminal first.
 
-### 方法一：打包成 App（推薦）
+### Option 1: Build the app (recommended)
 
 ```bash
 git clone https://github.com/Tanuki3701/desktop-cat.git
@@ -46,17 +65,15 @@ cd desktop-cat
 bash build_mac.sh
 ```
 
-完成後會出現在「應用程式」資料夾，之後用 Spotlight 搜尋 **DesktopCat** 就能開啟。
+The app is installed to your Applications folder. After that, open it from Spotlight or Launchpad by searching for **DesktopCat**.
 
-> 想讓貓咪開機自動出現：系統設定 → 一般 → 登入項目 → 按 ＋ 加入 DesktopCat。
+To start the cat automatically when you log in, open System Settings, go to General, then Login Items, and add DesktopCat.
 
-### 方法二：直接執行原始碼
+### Option 2: Run from source
 
-在終端機執行 `bash run.command`（第一次會自動安裝套件）。
+Run `bash run.command` in Terminal. The first run installs the dependencies automatically.
 
-> 想在 Finder 直接雙擊 `run.command`：先執行一次 `chmod +x run.command`。
-
-或手動執行：
+You can also run it manually.
 
 ```bash
 python3 -m venv .venv
@@ -64,28 +81,101 @@ python3 -m venv .venv
 .venv/bin/python src/main.py
 ```
 
-## 結束程式
+## Usage
 
-在貓咪身上按右鍵 → **結束**。
+- **Right-click** the cat (or two-finger click on a trackpad) to open the menu.
+- **Click** the cat to open the to-do list. Click a sleeping cat to wake it up.
+- **Drag** the cat with the left mouse button to move it.
+- To quit, right-click the cat and choose **Quit**.
 
-## 專案結構
+## Project structure
 
 ```
 desktop-cat/
 ├── src/
-│   ├── main.py          # 程式進入點
-│   ├── controller.py    # 管理所有貓咪與全域功能（番茄鐘、提醒、電量、睡覺、摸摸、餵食）
-│   ├── cat.py           # 一隻貓：動畫、移動、跳躍、右鍵選單
-│   ├── overlay.py       # 貓咪頭上的對話泡泡與特效
-│   ├── panels.py        # 待辦清單、罐罐
-│   ├── sprites.py       # 載入與快取精靈圖
-│   └── macos.py         # macOS 專用：隱藏 Dock、所有桌面、閒置時間、視窗位置
+│   ├── main.py          # Entry point
+│   ├── controller.py    # Manages all cats and global features
+│   ├── cat.py           # One cat: animation, movement, jumping
+│   ├── overlay.py       # Pixel speech bubble and effects above the cat
+│   ├── panels.py        # Pixel to-do list and the falling treat
+│   ├── glassmenu.py     # Frosted-glass right-click menu
+│   ├── pixel.py         # Pixel font, pixel icons, the ripening tomato, dialog frames
+│   ├── i18n.py          # English and Traditional Chinese strings
+│   ├── sprites.py       # Sprite loading and caching
+│   └── macos.py         # macOS helpers: Dock icon, Spaces, idle time, window positions, glass
 ├── assets/
-│   ├── sprites/         # 32×48 像素貓咪圖（走路 4 方向 × 3 格、睡覺 2 格）與特效
-│   └── icon.png         # App 圖示
+│   ├── sprites/         # 32x48 cat sprites (walking and sleeping) and effects
+│   ├── fonts/           # Fusion Pixel font (SIL OFL 1.1)
+│   └── icon.png         # App icon
 ├── tools/
-│   └── make_sprites.py  # 用原圖調色盤產生睡姿與特效圖
-├── DesktopCat.spec      # PyInstaller 打包設定
-├── build_mac.sh         # 一鍵打包並安裝
-└── run.command          # 直接執行原始碼
+│   ├── make_sprites.py      # Generates the sleeping sprites from the original palette
+│   └── make_screenshots.py  # Generates the screenshots in this README
+├── docs/screenshots/    # README images
+├── DesktopCat.spec      # PyInstaller build settings
+├── build_mac.sh         # One-step build and install
+└── run.command          # Run from source
 ```
+
+## Credits
+
+- The pixel font is [Fusion Pixel Font](https://fusion-pixel-font.takwolf.com) by TakWolf, licensed under the SIL Open Font License 1.1. See `assets/fonts/LICENSE-fusion-pixel.txt`.
+- The sleeping sprites were drawn pixel by pixel with the original sprite palette so that they match the original style.
+
+---
+
+## 繁體中文
+
+一隻住在 macOS 桌面上的像素小貓。牠會散步、跟著滑鼠、跳到視窗上走、陪你專注，你離開電腦時牠就趴著睡覺。
+
+### 功能
+
+#### 陪伴
+
+- **四種模式。** 待著不動、隨意漫步、跟著滑鼠，或是在其他 App 的視窗上走。
+- **在視窗上走。** 貓咪會跳到視窗頂端散步。你拖動視窗時牠會跟著移動，視窗關掉時牠會掉下來。
+- **睡覺。** 一段時間沒碰電腦，貓咪會趴下來睡覺。你一回來牠就醒了。
+- **摸摸。** 滑鼠在貓咪身上來回滑動，牠會呼嚕呼嚕並冒出愛心。
+- **餵罐罐。** 天上會掉下一個罐頭，貓咪會跑過去吃。
+- **多隻貓。** 可以同時養好幾隻不同顏色的貓，每隻都會記住自己的設定。
+- **自訂外觀。** 有四種毛色和三種大小，用滑鼠左鍵就能把貓咪拖到任何地方。
+
+#### 實用
+
+- **番茄鐘。** 可以專注 15、25 或 50 分鐘。貓咪頭上的像素番茄會隨時間變色，一開始是黃綠色，過一半變成黃橘色，時間到了變成紅色。時間到時貓咪會走到畫面中間提醒你，接著自動進入 5 分鐘休息。
+- **待辦清單。** 點一下貓咪就會打開遊戲風格的任務欄。全部打勾時，貓咪會開心轉圈。
+- **休息提醒。** 每 30、45 或 60 分鐘提醒你伸懶腰、喝水或讓眼睛休息。你在專注或不在電腦前時不會打擾。
+- **低電量提醒。** 電量低於 20% 時，貓咪會變得懶洋洋並提醒你充電。接上電源時牠會跟你道謝。
+
+#### 設計
+
+- **毛玻璃選單。** 右鍵選單使用 macOS 原生的毛玻璃材質，搭配透明漸層與像素圖示，子選單會立刻展開。
+- **像素風對話框。** 對話泡泡和待辦清單都是復古遊戲風格，像素字型同時支援英文和繁體中文。
+- **中英文切換。** 隨時可以在選單裡切換語言。第一次開啟時會依照系統語言自動選擇。
+
+![繁體中文選單](docs/screenshots/menu-zh.png)
+
+### 安裝
+
+需要 macOS 與 Python 3.9 以上的版本。如果還沒有 Python，請先在終端機執行 `xcode-select --install`。
+
+```bash
+git clone https://github.com/Tanuki3701/desktop-cat.git
+cd desktop-cat
+bash build_mac.sh
+```
+
+完成後 App 會安裝到「應用程式」資料夾。之後用 Spotlight 或 Launchpad 搜尋 **DesktopCat** 就能開啟。
+
+如果想讓貓咪在開機時自動出現，請到「系統設定」的「一般」裡的「登入項目」，把 DesktopCat 加進去。
+
+### 使用方式
+
+- 在貓咪身上**按右鍵**（觸控板雙指點按）可以打開選單。
+- **點一下**貓咪可以打開待辦清單。點一下睡著的貓咪可以把牠叫醒。
+- 用滑鼠左鍵**拖曳**可以移動貓咪。
+- 要結束程式時，在貓咪身上按右鍵並選擇**結束**。
+
+### 致謝
+
+- 像素字型使用 TakWolf 的 [Fusion Pixel Font](https://fusion-pixel-font.takwolf.com)，授權為 SIL Open Font License 1.1，授權全文在 `assets/fonts/LICENSE-fusion-pixel.txt`。
+- 睡覺的精靈圖是用原始精靈圖的調色盤一格一格畫出來的，所以和原本的畫風一致。
