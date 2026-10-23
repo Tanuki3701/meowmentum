@@ -445,17 +445,163 @@ def shot_tray():
     save(img, "menubar.png")
 
 
-shot_hero()
-shot_menu("en", "menu-en.png", sub_index=1)
-shot_menu("zh", "menu-zh.png")
-shot_pomodoro()
-shot_todo()
-shot_sleep_pet_feed()
-shot_windows()
-shot_picker()
-shot_flavors()
-shot_house()
-shot_patterns()
-shot_palette()
-shot_tray()
-ctrl.quit()
+
+# ---------------- 動圖 ---------------- #
+def save_gif(frames, name, ms):
+    """把多張 RGBA 合成 GIF（共用一組調色盤，畫面才不會閃）。"""
+    rgb = [f.convert("RGB") for f in frames]
+    pal = rgb[0].quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+    out = [f.quantize(palette=pal, dither=Image.Dither.NONE) for f in rgb]
+    out[0].save(os.path.join(OUT, name), save_all=True, append_images=out[1:], duration=ms,
+                loop=0, optimize=True, disposal=1)
+    print("saved", name, os.path.getsize(os.path.join(OUT, name)) // 1024, "KB")
+
+
+def cat_frame(c, color, direction, frame):
+    reset(c, color, direction)
+    c.frame = frame
+    c.walking = True
+    c.update()
+    flush()
+    pm = c.grab()
+    c.walking = False
+    return pm
+
+
+def gif_walk():
+    """首頁動圖：一隻貓在視窗上散步、一隻帶著番茄鐘走路、一隻三花往回走。"""
+    i18n.set_lang("en")
+    W, H = 900, 320
+    base = desktop(W, H, seed=1)
+    fake_window(base, 500, 110, 340, 200)
+    calico = ctrl.add_custom_color((245, 245, 245), (40, 140, 70), "", "calico")
+    foot = 5 * 3
+    frames = []
+    n = 40
+    for t in range(n):
+        img = base.copy()
+        f = (t // 2) % 3
+        x1 = 520 + (t * 5) % 260                         # 視窗上的白貓往右走
+        paste(img, cat_frame(cat, "white", 1, f), x1, 110 - (cat.height() - foot))
+        x2 = 380 - t * 6                                 # 三花往左走
+        paste(img, cat_frame(cat, calico, 3, f), x2, H - cat.height() + foot - 30)
+        reset(cat, "orange", 1)                          # 橘貓帶著番茄鐘
+        cat.frame = f
+        cat.walking = True
+        cat.overlay.label = (pixel.tomato(0.35, 2), "16:%02d" % (12 - t // 10))
+        cat_with_overlay(img, cat, 40 + t * 4, H - cat.height() + foot - 30)
+        cat.walking = False
+        frames.append(img)
+    reset(cat, "orange", 1)
+    ctrl.delete_custom_color(calico)
+    save_gif(frames, "walk.gif", 100)
+
+
+def gif_house():
+    import random as _r
+    i18n.set_lang("en")
+    W, H = 420, 300
+    base = desktop(W, H, seed=19)
+    house = ctrl.house
+    others = []
+    for color in ("white", "black"):
+        o = ctrl._spawn(ctrl.next_id, color)
+        ctrl.next_id += 1
+        others.append(o)
+    house.show()
+    _r.seed(5)
+    for i in range(30):
+        if i % 12 == 0:
+            house._puff()
+        house._animate()
+    frames = []
+    for t in range(48):
+        if t == 6:                                      # 白貓回家，從窗戶探頭
+            house.residents.append(others[0])
+            house.state[others[0]] = {"slot": "left", "mode": "peek", "rise": 0}
+        if t == 18:                                     # 黑貓從門口探頭
+            house.residents.append(others[1])
+            house.state[others[1]] = {"slot": "door", "mode": "peek", "rise": 0}
+        if t % 12 == 0:
+            house._puff()
+        if t % 16 == 2:
+            house._gust()
+        house._animate()
+        flush()
+        img = base.copy()
+        paste(img, house.grab(), (W - house.width()) // 2, H - house.height() - 6)
+        frames.append(img)
+    house.gust.stop()
+    house.anim.stop()
+    house.hide()
+    for o in others:
+        house.residents.remove(o)
+        house.state.pop(o)
+        ctrl.cats.remove(o)
+        o.dispose()
+    house.petals.clear()
+    house.smoke.clear()
+    save_gif(frames, "house.gif", 90)
+
+
+def gif_pomodoro():
+    i18n.set_lang("en")
+    W, H = 360, 200
+    base = desktop(W, H, seed=5)
+    frames = []
+    n = 26
+    for t in range(n):
+        prog = t / (n - 1)
+        left = int(round(25 * 60 * (1 - prog)))
+        reset(cat, "orange", 2)
+        cat.overlay.label = (pixel.tomato(prog, 2), "%02d:%02d" % (left // 60, left % 60))
+        img = base.copy()
+        cat_with_overlay(img, cat, (W - cat.width()) // 2, H - cat.height() - 4)
+        frames.append(img)
+    frames += [frames[-1]] * 6
+    reset(cat, "orange", 1)
+    save_gif(frames, "pomodoro.gif", 140)
+
+
+def gif_patterns():
+    i18n.set_lang("en")
+    W, H = 760, 200
+    base = desktop(W, H, seed=31)
+    looks = [((245, 245, 245), (40, 140, 70), "calico", None),
+             ((60, 52, 56), (230, 190, 60), "tuxedo", None),
+             ((150, 150, 158), (60, 160, 80), "tabby", (90, 90, 100)),
+             ((236, 170, 80), (58, 55, 55), "tabby", (186, 96, 46)),
+             ((245, 245, 245), (80, 150, 230), "spots", (60, 52, 56))]
+    ids = [ctrl.add_custom_color(f, e, "", p, p1) for f, e, p, p1 in looks]
+    frames = []
+    for t in range(12):
+        img = base.copy()
+        for i, cid in enumerate(ids):
+            d = 1 if i % 2 == 0 else 3
+            paste(img, cat_frame(cat, cid, d, (t + i) % 3), 30 + i * 145, H - cat.height() - 6)
+        frames.append(img)
+    for cid in ids:
+        ctrl.delete_custom_color(cid)
+    reset(cat, "orange", 1)
+    save_gif(frames, "patterns.gif", 160)
+
+
+if __name__ == "__main__":
+    shot_hero()
+    shot_menu("en", "menu-en.png", sub_index=1)
+    shot_menu("zh", "menu-zh.png")
+    shot_pomodoro()
+    shot_todo()
+    shot_sleep_pet_feed()
+    shot_windows()
+    shot_picker()
+    shot_flavors()
+    shot_house()
+    shot_patterns()
+    shot_palette()
+    shot_tray()
+    gif_walk()
+    gif_house()
+    gif_pomodoro()
+    gif_patterns()
+    ctrl.quit()
