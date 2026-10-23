@@ -10,7 +10,7 @@ from macos import hide_dock_icon
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("DesktopCat")
+    app.setApplicationName("Meowmentum")
     app.setQuitOnLastWindowClosed(False)
     hide_dock_icon()
     glassmenu.install(app)   # 選單零延遲、關閉動畫

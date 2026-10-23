@@ -140,39 +140,83 @@ class TodoRow(QWidget):
             p.drawPixmap(self._delete_rect().topLeft(), pixel.icon_pixmap("close", 2, (7, 7)))
 
 
-class TodoPanel(QWidget):
-    W = 290
+class PixelPanel(QWidget):
+    """像素風視窗的共用外觀：外框、金色標題列、拖曳標題列移動。"""
 
-    def __init__(self, ctrl):
+    def __init__(self):
         super().__init__(None)
-        self.ctrl = ctrl
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)
-        self.setFixedWidth(self.W)
         self._drag = None
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        r = self.rect().adjusted(0, 0, -U, -U)
+        pixel.draw_box(p, r, U)
+        band = QRect(r.left() + U, r.top() + U, r.width() - 2 * U, TITLE_H - U)
+        p.fillRect(band, pixel.GOLD)
+        p.fillRect(QRect(band.left(), band.top(), band.width(), U), QColor(248, 224, 160))
+        p.fillRect(QRect(band.left(), band.bottom() + 1, band.width(), U), pixel.INK)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and e.position().y() < TITLE_H:
+            self._drag = e.globalPosition().toPoint() - self.pos()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is not None:
+            self.move(e.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+
+    def _title_bar(self, icon_pm, title_label, on_close):
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        head.setContentsMargins(0, 0, 0, 0)
+        self._title_icon = QLabel()
+        self._title_icon.setPixmap(icon_pm)
+        head.addWidget(self._title_icon)
+        title_label.setFont(pixel.font(12))
+        title_label.setStyleSheet("color: #3a3737;")
+        head.addWidget(title_label)
+        head.addStretch()
+        close = PixelButton(icon=pixel.icon_pixmap("close", 2, (7, 7)))
+        close.clicked.connect(on_close)
+        head.addWidget(close)
+        box = QWidget()
+        box.setFixedHeight(TITLE_H - U - 6)
+        box.setLayout(head)
+        return box
+
+    def place_near(self, cat):
+        self.adjustSize()
+        screen = cat.screen_rect()
+        x = cat.x() + cat.width() + 8
+        if x + self.width() > screen.right():
+            x = cat.x() - self.width() - 8
+        y = min(max(screen.top(), cat.y()), screen.bottom() - self.height())
+        self.move(x, y)
+        self.show()
+        show_on_all_spaces(self)
+        self.raise_()
+        self.activateWindow()
+
+
+class TodoPanel(PixelPanel):
+    W = 290
+
+    def __init__(self, ctrl):
+        super().__init__()
+        self.ctrl = ctrl
+        self.setFixedWidth(self.W)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(U * 2 + 8, U + 6, U * 2 + 8 + U, U * 2 + 10 + U)
         lay.setSpacing(6)
 
-        head = QHBoxLayout()
-        head.setSpacing(6)
-        icon = QLabel()
-        icon.setPixmap(pixel.icon_pixmap("note", 2))
-        head.addWidget(icon)
         self.title = QLabel()
-        self.title.setFont(pixel.font(12))
-        self.title.setStyleSheet("color: #3a3737;")
-        head.addWidget(self.title)
-        head.addStretch()
-        close = PixelButton(icon=pixel.icon_pixmap("close", 2, (7, 7)))
-        close.clicked.connect(self.hide)
-        head.addWidget(close)
-        head_box = QWidget()
-        head_box.setFixedHeight(TITLE_H - U - 6)
-        head_box.setLayout(head)
-        head.setContentsMargins(0, 0, 0, 0)
+        head_box = self._title_bar(pixel.icon_pixmap("note", 2), self.title, self.hide)
         lay.addWidget(head_box)
         lay.addSpacing(4)
 
@@ -222,15 +266,6 @@ class TodoPanel(QWidget):
         self.retranslate()
 
     # ---------------- 外觀 ---------------- #
-    def paintEvent(self, _e):
-        p = QPainter(self)
-        r = self.rect().adjusted(0, 0, -U, -U)
-        pixel.draw_box(p, r, U)
-        band = QRect(r.left() + U, r.top() + U, r.width() - 2 * U, TITLE_H - U)
-        p.fillRect(band, pixel.GOLD)
-        p.fillRect(QRect(band.left(), band.top(), band.width(), U), QColor(248, 224, 160))
-        p.fillRect(QRect(band.left(), band.bottom() + 1, band.width(), U), pixel.INK)
-
     def retranslate(self):
         self.title.setText(tr("todo_title"))
         self.entry.setPlaceholderText(tr("todo_add"))
@@ -314,17 +349,6 @@ class TodoPanel(QWidget):
             self.ctrl.celebrate()
         self._all_done = all_done
 
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton and e.position().y() < TITLE_H:
-            self._drag = e.globalPosition().toPoint() - self.pos()
-
-    def mouseMoveEvent(self, e):
-        if self._drag is not None:
-            self.move(e.globalPosition().toPoint() - self._drag)
-
-    def mouseReleaseEvent(self, e):
-        self._drag = None
-
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
             self.hide()
@@ -336,17 +360,141 @@ class TodoPanel(QWidget):
             self.hide()
             return
         self._resize()
-        screen = cat.screen_rect()
-        x = cat.x() + cat.width() + 8
-        if x + self.width() > screen.right():
-            x = cat.x() - self.width() - 8
-        y = min(max(screen.top(), cat.y()), screen.bottom() - self.height())
-        self.move(x, y)
-        self.show()
-        show_on_all_spaces(self)
-        self.raise_()
-        self.activateWindow()
+        self.place_near(cat)
         self.entry.setFocus()
+
+
+class TimePicker(PixelPanel):
+    """自訂番茄鐘時間：− / + 調整，或點常用時間，按 Enter 開始。"""
+    W = 280
+    PRESETS = {"focus": (10, 20, 30, 45, 60, 90), "break": (3, 5, 10, 15, 20, 30)}
+
+    def __init__(self, ctrl):
+        super().__init__()
+        self.ctrl = ctrl
+        self.kind = "focus"
+        self.setFixedWidth(self.W)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(U * 2 + 8, U + 6, U * 2 + 8 + U, U * 2 + 10 + U)
+        lay.setSpacing(8)
+        self.title = QLabel()
+        lay.addWidget(self._title_bar(pixel.tomato(1.0, 2), self.title, self.hide))
+        lay.addSpacing(2)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch()
+        minus = PixelButton(icon=pixel.icon_pixmap("minus", 2, (7, 7)))
+        minus.setFixedSize(30, 30)
+        minus.clicked.connect(lambda: self._bump(-1))
+        row.addWidget(minus)
+        self.value = QLineEdit()
+        self.value.setAlignment(Qt.AlignCenter)
+        self.value.setFixedWidth(84)
+        self.value.setMaxLength(3)
+        _style_line_edit(self.value)
+        self.value.setFont(pixel.font(24))
+        self.value.setStyleSheet(self.value.styleSheet().replace("font-size: 12px", "font-size: 24px"))
+        self.value.textEdited.connect(self._clean)
+        self.value.returnPressed.connect(self._start)
+        row.addWidget(self.value)
+        self.unit = QLabel()
+        self.unit.setFont(pixel.font(12))
+        self.unit.setStyleSheet("color: #3a3737;")
+        row.addWidget(self.unit)
+        plus = PixelButton(icon=pixel.icon_pixmap("plus", 2, (7, 7)))
+        plus.setFixedSize(30, 30)
+        plus.clicked.connect(lambda: self._bump(1))
+        row.addWidget(plus)
+        row.addStretch()
+        lay.addLayout(row)
+
+        self.chips = QHBoxLayout()
+        self.chips.setSpacing(4)
+        lay.addLayout(self.chips)
+
+        self.hint = QLabel()
+        self.hint.setFont(pixel.font(12))
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color: #7a6a58;")
+        lay.addWidget(self.hint)
+
+        foot = QHBoxLayout()
+        foot.addStretch()
+        self.cancel_btn = PixelButton()
+        self.cancel_btn.clicked.connect(self.hide)
+        foot.addWidget(self.cancel_btn)
+        self.start_btn = PixelButton()
+        self.start_btn.clicked.connect(self._start)
+        foot.addWidget(self.start_btn)
+        lay.addLayout(foot)
+
+    def open(self, kind, cat):
+        self.kind = kind
+        if kind == "focus":
+            current = self.ctrl.custom_focus or 25
+            self._title_icon.setPixmap(pixel.tomato(1.0, 2))
+        else:
+            current = self.ctrl.break_min
+            self._title_icon.setPixmap(pixel.icon_pixmap("cup", 2))
+        self.retranslate()
+        while self.chips.count():
+            w = self.chips.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        for m in self.PRESETS[kind]:
+            b = PixelButton(str(m))
+            b.clicked.connect(lambda _=False, m=m: self._set(m))
+            self.chips.addWidget(b)
+        self._set(current)
+        self.place_near(cat)
+        self.value.setFocus()
+        self.value.selectAll()
+
+    def retranslate(self):
+        self.title.setText(tr("pick_focus" if self.kind == "focus" else "pick_break"))
+        self.unit.setText(tr("minutes"))
+        self.hint.setText(tr("pick_hint_break") if self.kind == "break" else "")
+        self.hint.setVisible(self.kind == "break")
+        self.cancel_btn.setText(tr("cancel"))
+        self.start_btn.setText(tr("start"))
+        for b in (self.cancel_btn, self.start_btn):
+            b.updateGeometry()
+
+    def _minutes(self):
+        try:
+            return max(1, min(180, int(self.value.text())))
+        except ValueError:
+            return 25 if self.kind == "focus" else 5
+
+    def _set(self, m):
+        self.value.setText(str(max(1, min(180, m))))
+
+    def _bump(self, d):
+        self._set(self._minutes() + d)
+
+    def _clean(self, text):
+        digits = "".join(c for c in text if c.isdigit())
+        if digits != text:
+            self.value.setText(digits)
+
+    def _start(self):
+        m = self._minutes()
+        self.hide()
+        self.ctrl.picked(self.kind, m)
+
+    def keyPressEvent(self, e):
+        step = 5 if e.modifiers() & Qt.ShiftModifier else 1
+        if e.key() == Qt.Key_Escape:
+            self.hide()
+        elif e.key() == Qt.Key_Up:
+            self._bump(step)
+        elif e.key() == Qt.Key_Down:
+            self._bump(-step)
+        else:
+            super().keyPressEvent(e)
 
 
 class Food(QWidget):

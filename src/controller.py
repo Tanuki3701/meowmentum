@@ -14,7 +14,7 @@ import pixel
 from cat import COLORS, Cat
 from i18n import tr
 from macos import show_on_all_spaces
-from panels import Food, TodoPanel
+from panels import Food, TimePicker, TodoPanel
 
 PULSE_INTERVAL = 400        # 背景輕量檢查：閒置時間、滑鼠是否在貓咪身上
 PET_INTERVAL = 50           # 滑鼠在貓咪身上時，才開始密集偵測「摸摸」
@@ -38,6 +38,7 @@ def _subtract(intervals, cut):
 class Controller(QObject):
     def __init__(self):
         super().__init__()
+        # 設定沿用舊名稱的儲存位置，改名後貓咪、待辦和設定都會保留
         self.settings = QSettings("DesktopCat", "DesktopCat")
         s = self.settings
         self.tired = False
@@ -57,6 +58,9 @@ class Controller(QObject):
         self.pomo_end = 0.0
         self.pomo_total = 1.0
         self.pomo_timer = self._timer(self._pomo_tick, 1000)
+        self.custom_focus = int(s.value("custom_focus", 0))    # 上次自訂的專注分鐘數
+        self.break_min = int(s.value("break_min", 5))          # 專注結束後自動休息的分鐘數
+        self.picker = TimePicker(self)
 
         # ---- 休息提醒 ----
         self.remind_min = int(s.value("remind_min", 0))
@@ -142,8 +146,14 @@ class Controller(QObject):
             pomo.item("power", tr("pomo_stop"), self.stop_pomodoro)
             pomo.addSeparator()
         for m in (15, 25, 50):
-            pomo.item(None, tr("focus_n", m=m), lambda m=m: self.start_focus(m)).setIcon(pixel.blank_icon())
-        pomo.item("cup", tr("break_n", m=5), lambda: self.start_break(5))
+            pomo.item(pixel.blank_icon(), tr("focus_n", m=m), lambda m=m: self.start_focus(m))
+        if self.custom_focus and self.custom_focus not in (15, 25, 50):
+            m = self.custom_focus
+            pomo.item(pixel.blank_icon(), tr("focus_custom_n", m=m), lambda: self.start_focus(m))
+        pomo.item("pencil", tr("custom_focus"), lambda: self.picker.open("focus", cat))
+        pomo.addSeparator()
+        pomo.item("cup", tr("break_n", m=self.break_min), lambda: self.start_break(self.break_min))
+        pomo.item("pencil", tr("custom_break"), lambda: self.picker.open("break", cat))
 
         menu.item("note", tr("todo"), lambda: self.toggle_todo(cat))
         menu.item("can", tr("feed"), lambda: self.feed(cat))
@@ -172,6 +182,7 @@ class Controller(QObject):
         i18n.set_lang(lang)
         self.settings.setValue("lang", lang)
         self.todo.retranslate()
+        self.picker.hide()
 
     # ---------------- 番茄鐘 ---------------- #
     def _pomo_left(self):
@@ -195,6 +206,17 @@ class Controller(QObject):
 
     def start_break(self, minutes):
         self._start_phase("break", minutes)
+
+    def picked(self, kind, minutes):
+        """時間選擇器按下「開始」：記住自訂值並開始計時。"""
+        if kind == "focus":
+            self.custom_focus = minutes
+            self.settings.setValue("custom_focus", minutes)
+            self.start_focus(minutes)
+        else:
+            self.break_min = minutes
+            self.settings.setValue("break_min", minutes)
+            self.start_break(minutes)
 
     def _start_phase(self, phase, minutes):
         self.pomo_phase = phase
@@ -222,13 +244,13 @@ class Controller(QObject):
     def _pomo_finish(self):
         cat = self.main_cat
         if self.pomo_phase == "focus":
-            self.start_break(5)
+            self.start_break(self.break_min)
             r = cat.screen_rect()
             x = r.center().x() - cat.width() / 2
 
             def arrived():
                 cat.spin(2)
-                cat.overlay.say(tr("say_focus_done"), 6000)
+                cat.overlay.say(tr("say_focus_done", m=self.break_min), 6000)
                 cat.overlay.burst("heart", 4)
 
             cat.go_to(x, cat.ground_y(), then=arrived)

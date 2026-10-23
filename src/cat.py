@@ -22,7 +22,7 @@ STAND_FRAME = 1
 UP, RIGHT, DOWN, LEFT = 0, 1, 2, 3
 
 COLORS = ["orange", "black", "white", "brown"]
-MODES = ["idle", "random", "follow", "windows"]
+MODES = ["idle", "random", "follow", "windows", "sleep"]
 DIRECTIONS = {DOWN: "dir_down", LEFT: "dir_left", RIGHT: "dir_right", UP: "dir_up"}
 SIZES = [2, 3, 4]
 
@@ -209,6 +209,8 @@ class Cat(QWidget):
         elif self.mode == "windows":
             self._set_walking(False)
             self.rest_timer.start(600)
+        elif self.mode == "sleep":
+            self.sleep()
         self.update()
 
     def _resume(self):
@@ -420,7 +422,7 @@ class Cat(QWidget):
     # ---------------- 特別動作 ---------------- #
     def go_to(self, x, y, then=None, speed=7):
         if self.activity == "sleep":
-            self.wake(quiet=True)
+            self.wake(quiet=True, force=True)
         self._stop_all()
         self.activity = "fetch"
         self.perch = None
@@ -450,7 +452,7 @@ class Cat(QWidget):
 
     def spin(self, rounds=2):
         if self.activity == "sleep":
-            self.wake(quiet=True)
+            self.wake(quiet=True, force=True)
         if self.activity is not None:
             self.overlay.burst("heart", 3)
             return
@@ -472,8 +474,9 @@ class Cat(QWidget):
         self.update()
         self.overlay.follow()
 
-    def wake(self, quiet=False):
-        if self.activity != "sleep":
+    def wake(self, quiet=False, force=False):
+        """叫醒貓咪。睡覺模式下只有 force=True（拖曳、換模式等）才會真的醒來。"""
+        if self.activity != "sleep" or (self.mode == "sleep" and not force):
             return
         self.act_timer.stop()
         self.direction = LEFT if self._sleep_side else RIGHT
@@ -502,7 +505,7 @@ class Cat(QWidget):
                     if wid == self.perch["wid"]:
                         break
                 else:
-                    self.wake(quiet=True)
+                    self.wake(quiet=True, force=True)
                     self.start_fall()
         elif self.activity == "spin":
             self.direction = (DOWN, RIGHT, UP, LEFT)[n % 4]
@@ -540,7 +543,7 @@ class Cat(QWidget):
             if (gp - self._press[0]).manhattanLength() < 5:
                 return
             if self.activity == "sleep":
-                self.wake(quiet=True)
+                self.wake(quiet=True, force=True)
             if self.activity == "eat" and getattr(self, "_food", None):
                 self._food.close()
                 self._food = None
@@ -566,8 +569,11 @@ class Cat(QWidget):
                 self._move_to(*self._clamp(self.x(), self.y()))
                 self._resume()
         elif self.activity == "sleep":
-            self.wake()
-            self.overlay.burst("heart", 2)
+            if self.mode == "sleep":
+                self.overlay.burst("heart", 2)   # 睡覺模式：摸摸頭，繼續睡
+            else:
+                self.wake()
+                self.overlay.burst("heart", 2)
         else:
             self.ctrl.toggle_todo(self)
 
@@ -596,7 +602,7 @@ class Cat(QWidget):
 
     def set_mode(self, mode):
         if self.activity == "sleep":
-            self.wake(quiet=True)
+            self.wake(quiet=True, force=True)
         self.mode = mode
         self._save("mode", mode)
         self._apply_mode()

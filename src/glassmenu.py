@@ -14,8 +14,8 @@ RADIUS = 12
 QSS_GLASS = """
 QMenu {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 rgba(255, 255, 255, 120), stop:1 rgba(255, 246, 232, 60));
-    border: 1px solid rgba(255, 255, 255, 170);
+                stop:0 rgba(255, 255, 255, 222), stop:1 rgba(252, 246, 238, 200));
+    border: 1px solid rgba(255, 255, 255, 230);
     border-radius: %(r)dpx;
     padding: 6px 5px;
 }
@@ -91,7 +91,7 @@ def _mask():
         path.addRoundedRect(QRectF(0, 0, size, size), RADIUS, RADIUS)
         p.fillPath(path, QColor(0, 0, 0))
         p.end()
-        _mask_path = os.path.join(tempfile.gettempdir(), "desktopcat-glass-mask.png")
+        _mask_path = os.path.join(tempfile.gettempdir(), "meowmentum-glass-mask.png")
         img.save(_mask_path)
     return _mask_path
 
