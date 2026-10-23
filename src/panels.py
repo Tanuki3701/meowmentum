@@ -77,7 +77,7 @@ class PixelButton(QAbstractButton):
         r = self.rect().adjusted(0, down, -2, -2 + down)
         hover = self.underMouse()
         if self._icon is not None:
-            if hover or self.isDown():
+            if hover or self.isDown() or self.isChecked():
                 pixel.draw_box(p, r, 2, fill=pixel.GOLD, light=None, shadow=False)
             pm = self._icon
             iw, ih = pm.width() / pm.devicePixelRatio(), pm.height() / pm.devicePixelRatio()
@@ -573,6 +573,7 @@ class PaletteDialog(PixelPanel):
         super().__init__()
         self.ctrl = ctrl
         self.target = None
+        self.editing = None          # 正在編輯的自訂毛色 id；None = 新增
         self.fur = self.FURS[1]
         self.eye = self.EYES[3]
         self.setFixedWidth(self.W)
@@ -588,6 +589,16 @@ class PaletteDialog(PixelPanel):
         self.preview.setFixedHeight(150)
         lay.addWidget(self.preview)
 
+        self.name_label = QLabel()
+        self.name_label.setFont(pixel.font(12))
+        self.name_label.setStyleSheet("color: #3a3737;")
+        lay.addWidget(self.name_label)
+        self.name_edit = QLineEdit()
+        self.name_edit.setMaxLength(16)
+        _style_line_edit(self.name_edit)
+        self.name_edit.returnPressed.connect(self._save)
+        lay.addWidget(self.name_edit)
+
         self.fur_label, self.fur_btns = self._swatch_row(lay, self.FURS, self._pick_fur, "fur")
         self.eye_label, self.eye_btns = self._swatch_row(lay, self.EYES, self._pick_eye, "eye")
 
@@ -600,6 +611,9 @@ class PaletteDialog(PixelPanel):
         lay.addLayout(self.mine_row)
 
         foot = QHBoxLayout()
+        self.new_btn = PixelButton()
+        self.new_btn.clicked.connect(self._start_new)
+        foot.addWidget(self.new_btn)
         foot.addStretch()
         self.cancel_btn = PixelButton()
         self.cancel_btn.clicked.connect(self.hide)
@@ -670,8 +684,10 @@ class PaletteDialog(PixelPanel):
             cl.setSpacing(0)
             b = PixelButton(icon=pixel.cat_head_icon(cid).pixmap(18, 18))
             b.setFixedSize(26, 26)
+            b.setCheckable(True)
+            b.setChecked(cid == self.editing)
             b.setToolTip(names[cid])
-            b.clicked.connect(lambda _=False, cid=cid: self._apply(cid))
+            b.clicked.connect(lambda _=False, cid=cid: self._edit(cid))
             cl.addWidget(b)
             x = PixelButton(icon=pixel.icon_pixmap("close", 1, (7, 7)))
             x.setFixedSize(14, 26)
@@ -686,25 +702,61 @@ class PaletteDialog(PixelPanel):
         if self.target in self.ctrl.cats:
             self.target.set_color(cid)
 
+    def _edit(self, cid):
+        """點我的毛色：套用到這隻貓，並載入編輯（可以改名字、改顏色）。"""
+        c = self.ctrl.custom_color(cid)
+        if not c:
+            return
+        self.editing = cid
+        self.fur, self.eye = tuple(c["fur"]), tuple(c["eye"])
+        self.name_edit.setText(c.get("name", ""))
+        self._apply(cid)
+        self.retranslate()
+        self._fill_mine()
+        self._refresh()
+
+    def _start_new(self):
+        self.editing = None
+        self.name_edit.clear()
+        self.retranslate()
+        self._fill_mine()
+
     def _delete(self, cid):
         self.ctrl.delete_custom_color(cid)
+        if self.editing == cid:
+            self.editing = None
+            self.name_edit.clear()
+        self.retranslate()
         self._fill_mine()
 
     def _save(self):
-        cid = self.ctrl.add_custom_color(self.fur, self.eye)
+        name = self.name_edit.text()
+        if self.editing and self.ctrl.custom_color(self.editing):
+            cid = self.ctrl.update_custom_color(self.editing, self.fur, self.eye, name)
+        else:
+            cid = self.ctrl.add_custom_color(self.fur, self.eye, name)
         self._apply(cid)
         self.hide()
 
     def retranslate(self):
         self.title.setText(tr("palette_title"))
+        self.name_label.setText(tr("color_name"))
+        if self.editing:
+            self.name_edit.setPlaceholderText(self.ctrl.custom_color_names().get(self.editing, ""))
+        else:
+            self.name_edit.setPlaceholderText(self.ctrl.next_default_name())
         self.fur_label.setText(tr("fur"))
         self.eye_label.setText(tr("eyes"))
-        self.mine_label.setText(tr("my_colors"))
+        self.mine_label.setText(tr("my_colors_hint"))
+        self.new_btn.setText(tr("new_color"))
+        self.new_btn.setVisible(bool(self.editing))
         self.cancel_btn.setText(tr("cancel"))
-        self.save_btn.setText(tr("save_apply"))
+        self.save_btn.setText(tr("save_changes") if self.editing else tr("save_apply"))
 
     def open_for(self, cat):
         self.target = cat
+        self.editing = None
+        self.name_edit.clear()
         self.retranslate()
         self._fill_mine()
         self._refresh()

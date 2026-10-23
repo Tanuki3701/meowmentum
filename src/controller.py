@@ -224,11 +224,10 @@ class Controller(QObject):
         m.sub("paw", tr("all_mode")).choices(
             {k: tr("mode_" + k) for k in MODES}, modes.pop() if len(modes) == 1 else None,
             self.set_all_mode)
-        if self.house.residents:
-            m.item("paw", tr("come_out"), self.come_out)
-        if len(self.house.residents) < len(self.cats):
-            m.item("home", tr("go_home_all"), self.go_home_all)
-        m.item("check" if self.house.isVisible() else None, tr("house_show"), self.toggle_house)
+        hm = m.sub("home", tr("house_menu"))
+        self.house.fill_menu(hm)
+        hm.addSeparator()
+        hm.item("check" if self.house.isVisible() else None, tr("house_show"), self.toggle_house)
         m.addSeparator()
         m.item(pixel.cat_head_icon("orange", plus=True), tr("add_cat"), lambda: self.add_cat(self.main_cat))
         m.item("palette", tr("palette"), lambda: self.open_palette(self.main_cat))
@@ -279,17 +278,48 @@ class Controller(QObject):
         self.settings.setValue("custom_colors", json.dumps(self.custom_colors))
 
     def custom_color_names(self):
-        return {c["id"]: tr("custom_n", n=c["n"]) for c in self.custom_colors}
+        """自訂毛色的顯示名稱：有取名就用名字，沒取名的依序編號（刪掉後自動接續，不跳號）。"""
+        names, n = {}, 0
+        for c in self.custom_colors:
+            if c.get("name"):
+                names[c["id"]] = c["name"]
+            else:
+                n += 1
+                names[c["id"]] = tr("custom_n", n=n)
+        return names
+
+    def next_default_name(self):
+        n = sum(1 for c in self.custom_colors if not c.get("name")) + 1
+        return tr("custom_n", n=n)
+
+    def custom_color(self, cid):
+        return next((c for c in self.custom_colors if c["id"] == cid), None)
 
     def open_palette(self, cat):
         self.palette.open_for(cat)
 
-    def add_custom_color(self, fur, eye):
-        n = max([c["n"] for c in self.custom_colors], default=0) + 1
-        cid = f"custom{n}"
-        self.custom_colors.append({"id": cid, "n": n, "fur": list(fur), "eye": list(eye)})
+    def add_custom_color(self, fur, eye, name=""):
+        used = {c["id"] for c in self.custom_colors}
+        k = 1
+        while f"custom{k}" in used:
+            k += 1
+        cid = f"custom{k}"
+        self.custom_colors.append({"id": cid, "fur": list(fur), "eye": list(eye),
+                                   "name": name.strip()})
         sprites.CUSTOM[cid] = sprites.derive_spec(fur, eye)
         self._save_custom_colors()
+        return cid
+
+    def update_custom_color(self, cid, fur, eye, name=""):
+        c = self.custom_color(cid)
+        if not c:
+            return self.add_custom_color(fur, eye, name)
+        c.update(fur=list(fur), eye=list(eye), name=name.strip())
+        sprites.CUSTOM[cid] = sprites.derive_spec(fur, eye)
+        self._save_custom_colors()
+        for cat in self.cats:
+            if cat.color == cid:
+                cat.set_color(cid)
         return cid
 
     def delete_custom_color(self, cid):

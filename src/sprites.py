@@ -39,8 +39,10 @@ for _i, _f in enumerate(FLAVORS):
 EFFECTS["can"] = EFFECTS["can_tuna"]
 
 # 貓屋開口（house.png 座標）：(x, y, w, h)
-HOUSE_SLOTS = {"door": (18, 31, 12, 13), "left": (5, 25, 10, 7), "right": (33, 25, 10, 7),
-               "attic": (19, 9, 10, 6)}
+HOUSE_W, HOUSE_H, HOUSE_GROUND = 56, 56, 52
+HOUSE_CHIMNEY = (41, 2)
+HOUSE_SLOTS = {"door": (22, 38, 12, 14), "left": (11, 31, 9, 7), "right": (36, 31, 9, 7),
+               "attic": (23, 12, 10, 6)}
 SLOT_ORDER = ["door", "left", "right", "attic"]
 
 _cache = {}

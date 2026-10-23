@@ -720,7 +720,7 @@ class Cat(QWidget):
                 self.wake()
                 self.overlay.burst("heart", 2)
         else:
-            self.ctrl.toggle_todo(self)
+            self.overlay.burst("heart", 1)   # 左鍵只是摸摸，功能一律從右鍵選單
 
     def contextMenuEvent(self, e):
         menu = GlassMenu()
