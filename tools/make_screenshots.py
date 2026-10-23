@@ -126,6 +126,7 @@ def reset(c, color="orange", direction=1):
     c.overlay.text = None
     c.overlay.label = None
     c.overlay.effects = []
+    c.expression = None
     c.update()
 
 
@@ -259,16 +260,121 @@ def shot_hero():
 
 def shot_picker():
     i18n.set_lang("en")
-    img = desktop(620, 330, seed=13)
+    img = desktop(620, 360, seed=13)
     reset(cat, "orange", 1)
-    cat.overlay.label = (pixel.tomato(0.15, 2), "37:00")
-    cat_with_overlay(img, cat, 50, 160)
-    ctrl.custom_focus = 37
+    cat.overlay.label = (pixel.tomato(0.15, 2), "67:00")
+    cat_with_overlay(img, cat, 50, 190)
+    ctrl.recent["focus"] = [67, 37, 15]
     ctrl.picker.open("focus", cat)
     flush()
-    paste(img, ctrl.picker.grab(), 260, 70)
+    paste(img, ctrl.picker.grab(), 260, 60)
     ctrl.picker.hide()
     save(img, "custom-time.png")
+
+
+def shot_flavors():
+    i18n.set_lang("en")
+    img = desktop(1080, 320, seed=17)
+    import sprites
+    plan = [("tuna", "orange", "happy", "heart", "react_tuna"),
+            ("chicken", "white", "happy", "note", "react_chicken"),
+            ("salmon", "brown", "excited", "sparkle", "react_salmon"),
+            ("catnip", "black", "dizzy", "sparkle", "react_dizzy"),
+            ("bitter", "orange", "yuck", "sweat", "react_bitter")]
+    for i, (flavor, color, expr, fx, text) in enumerate(plan):
+        reset(cat, color, 1)
+        cat.expression, cat._expr_side = expr, 0
+        cat.overlay.text = i18n.tr(text)
+        cat.overlay.effects = [[fx, cat.overlay.W / 2 - 28, cat.overlay.H - 22, 5],
+                               [fx, cat.overlay.W / 2 + 26, cat.overlay.H - 40, 5]]
+        cat.update()
+        x = 40 + i * 205
+        cat_with_overlay(img, cat, x, 160)
+        paste(img, sprites.effect("can_" + flavor, 2), x + cat.width() - 2, 160 + cat.height() - 15 - 16)
+    save(img, "flavors.png")
+
+
+def shot_house():
+    i18n.set_lang("en")
+    img = desktop(720, 340, seed=19)
+    house = ctrl.house
+    others = []
+    for color in ("white", "black", "brown"):
+        o = ctrl._spawn(ctrl.next_id, color)
+        ctrl.next_id += 1
+        others.append(o)
+    for o, slot, mode in zip(others, ("left", "door", "attic"), ("peek", "peek", "sleep")):
+        house.residents.append(o)
+        house.state[o] = {"slot": slot, "mode": mode, "rise": 8}
+    house._tick_n = 1
+    house.show()
+    flush()
+    hx, hy = 330, 340 - house.height() - 6
+    paste(img, house.grab(), hx, hy)
+    reset(cat, "orange", 1)
+    cat.overlay.text = i18n.tr("go_home") + "!"
+    cat_with_overlay(img, cat, 150, 340 - cat.height() + 15 - 6 - 3 * 3)
+    house.hide()
+    for o in others:
+        house.residents.remove(o)
+        house.state.pop(o)
+        ctrl.cats.remove(o)
+        o.dispose()
+    save(img, "house.png")
+
+
+def shot_palette():
+    i18n.set_lang("en")
+    img = desktop(640, 470, seed=23)
+    cid = ctrl.add_custom_color((140, 190, 230), (230, 190, 60))
+    cid2 = ctrl.add_custom_color((236, 170, 190), (80, 150, 230))
+    reset(cat, cid, 1)
+    paste(img, cat.grab(), 40, 300)
+    reset(cat, cid2, 3)
+    paste(img, cat.grab(), 130, 320)
+    reset(cat, "orange", 1)
+    ctrl.open_palette(cat)
+    ctrl.palette._pick_fur((180, 160, 220))
+    ctrl.palette._pick_eye((60, 160, 80))
+    flush()
+    paste(img, ctrl.palette.grab(), 250, 40)
+    ctrl.palette.hide()
+    for c in (cid, cid2):
+        ctrl.delete_custom_color(c)
+    save(img, "palette.png")
+
+
+def shot_tray():
+    """選單列的選單（macOS 上是系統原生選單，這裡用同樣的內容示意）。"""
+    i18n.set_lang("en")
+    img = desktop(680, 520, seed=29)
+    s = int(DPR)
+    bar = Image.new("RGBA", (img.width, 26 * s), (246, 246, 248, 215))
+    img.alpha_composite(bar, (0, 0))
+    from PIL import ImageDraw as _D
+    hl = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    _D.Draw(hl).rounded_rectangle([212 * s, 3 * s, 238 * s, 23 * s], 5 * s, fill=(0, 0, 0, 38))
+    img.alpha_composite(hl)
+    tray = Image.open(os.path.join(ROOT, "assets", "tray.png")).convert("RGBA")
+    tray = tray.resize((18 * s, 18 * s), Image.NEAREST)
+    img.alpha_composite(tray, (216 * s, 4 * s))
+    real = ctrl.tray_menu if ctrl.tray else None
+    ctrl.tray_menu = glassmenu.GlassMenu()
+    ctrl._build_tray_menu()
+    menu = ctrl.tray_menu
+    menu.popup(QPoint(0, 0))
+    flush()
+    glass_paste(img, to_pil(menu.grab()), 212, 30)
+    act = [a for a in menu.actions() if a.menu()][2]       # Mode for all cats
+    sub = act.menu()
+    sub.popup(QPoint(0, 0))
+    flush()
+    glass_paste(img, to_pil(sub.grab()), 212 + menu.width() - 6, 30 + menu.actionGeometry(act).top() - 6)
+    sub.hide()
+    menu.hide()
+    if real is not None:
+        ctrl.tray_menu = real
+    save(img, "menubar.png")
 
 
 shot_hero()
@@ -279,4 +385,8 @@ shot_todo()
 shot_sleep_pet_feed()
 shot_windows()
 shot_picker()
+shot_flavors()
+shot_house()
+shot_palette()
+shot_tray()
 ctrl.quit()
