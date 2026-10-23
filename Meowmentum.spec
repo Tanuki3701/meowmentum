@@ -4,7 +4,8 @@
 a = Analysis(
     ["src/main.py"],
     pathex=["src"],
-    datas=[("assets/sprites", "assets/sprites"), ("assets/fonts", "assets/fonts")],
+    datas=[("assets/sprites", "assets/sprites"), ("assets/fonts", "assets/fonts"),
+           ("assets/tray.png", "assets")],
     excludes=["tkinter", "unittest", "pydoc", "PySide6.QtNetwork", "PySide6.QtQml",
               "PySide6.QtQuick", "PySide6.QtWebEngineCore", "PySide6.QtMultimedia"],
 )
