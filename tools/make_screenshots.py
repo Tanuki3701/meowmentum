@@ -504,44 +504,62 @@ def shot_stats():
     save(img, "stats.png")
 
 
-def shot_inside():
-    i18n.set_lang("en")
-    _freeze((2026, 10, 29), 15)
-    img = desktop(820, 420, seed=43)
+def _inside_scene(img, house, looks, acts, ox, oy):
+    """把貓屋切成「裡面」，在房間裡放幾隻貓，貼到 img 上。looks: [(color, hat, neck)]。"""
     pr = ctrl.progress
-    pr.owned |= {"rug", "plant", "lamp", "painting", "scratcher", "fishtank", "yarn"}
-    house = ctrl.house
     house.show()
-    others = []
-    looks = [("white", "party", None), ("black", None, "scarf"), ("brown", "beanie", None)]
-    for color, hat, neck in looks:
+    house.set_view("inside", animate=False)
+    house.setWindowOpacity(1.0)
+    house.move(int(ox), int(oy))
+    flush()
+    paste(img, house.grab(), ox, oy)
+    cats = []
+    for (color, hat, neck), (kind, ax, d, frame) in zip(looks, acts):
         o = ctrl._spawn(ctrl.next_id, color)
         ctrl.next_id += 1
         o.hat, o.neck = hat, neck
         pr.owned |= {x for x in (hat, neck) if x}
-        o.activity = "home"
-        house.residents.append(o)
-        house.state[o] = {"slot": "door", "mode": "sleep", "rise": 6}
-        others.append(o)
-    ctrl.open_interior()
-    room = ctrl._inside.room
-    room.timer.stop()
-    room._sync()
-    kinds = [("sleep", 71), ("play", 46), ("eat", 33)]
-    for o, (k, x) in zip(others, kinds):
-        room.acts[o] = {"kind": k, "x": float(x), "dir": 3, "t": 99, "tx": 40}
-    room._n = 6
-    ctrl._inside.refresh()
-    flush()
-    paste(img, house.grab(), 20, 420 - house.height() - 6)
-    paste(img, ctrl._inside.grab(), 300, 40)
-    ctrl._inside.hide()
-    house.hide()
-    for o in others:
-        house.residents.remove(o)
-        house.state.pop(o)
+        o._build_frames()
+        reset(o, color, d)
+        o.hat, o.neck = hat, neck
+        o._build_frames()
+        o.direction, o.frame = d, frame
+        if kind == "sleep":
+            o.activity = "sleep"
+            o._sleep_side = 1 if d == 3 else 0
+        elif kind == "happy":
+            o.show_expression("happy", 9999)
+        o.update()
+        flush()
+        x = house.x() + (8 + ax) * house.U - o.width() / 2
+        y = house.indoor_floor_y(o)
+        paste(img, o.grab(), x, y)
+        cats.append(o)
+    for o in cats:
         ctrl.cats.remove(o)
         o.dispose()
+    house.set_view("outside", animate=False)
+    house.hide()
+
+
+def shot_inside():
+    i18n.set_lang("en")
+    _freeze((2026, 10, 29), 15)
+    W, H = 900, 400
+    img = desktop(W, H, seed=43)
+    pr = ctrl.progress
+    pr.owned |= {"rug", "plant", "lamp", "painting", "scratcher", "fishtank", "yarn"}
+    house = ctrl.house
+    oy = H - 6 - house.height()
+    house.set_view("inside", animate=False)
+    oy = H - 6 - (house.height())
+    house.set_view("outside", animate=False)
+    _inside_scene(img, house, [("white", "party", None), ("black", None, "scarf"), ("orange", "beanie", None)],
+                  [("sleep", 76, 1, 0), ("walk", 54, 3, 0), ("happy", 32, 1, 1)], 40, oy)
+    # 右邊：同一間屋子的晚上
+    _freeze((2026, 12, 20), 21)
+    _inside_scene(img, house, [("brown", "santa", None), ("white", None, "collar")],
+                  [("sleep", 76, 3, 0), ("walk", 40, 1, 2)], 470, oy)
     save(img, "inside.png")
     _unfreeze()
 
@@ -606,13 +624,9 @@ def shot_play():
     paste(img, pix(WAND[0], 3), 560, ground - 120)
     cat.neck = None
     cat._build_frames()
-    # 有名牌的白貓
+    # 散步的白貓
     reset(cat, "white", 3)
-    cat.name = "Mochi"
-    cat.overlay.tag = cat.display_name()
-    cat_with_overlay(img, cat, 720, ground - cat.height() + foot)
-    cat.overlay.tag = None
-    cat.name = ""
+    paste(img, cat.grab(), 720, ground - cat.height() + foot)
     box.dispose()
     tree.dispose()
     ctrl.cats.remove(helper)
@@ -720,6 +734,65 @@ def gif_house():
     save_gif(frames, "house.gif", 90)
 
 
+def gif_inside():
+    """貓屋裡面：一隻貓在房間裡走來走去、一隻在軟墊上睡覺，煙囪冒著煙。"""
+    import random as _r
+    i18n.set_lang("en")
+    _freeze((2026, 10, 29), 15)
+    W, H = 460, 300
+    base = desktop(W, H, seed=27)
+    pr = ctrl.progress
+    pr.owned |= {"rug", "plant", "lamp", "painting", "fishtank", "yarn"}
+    house = ctrl.house
+    house.show()
+    house.set_view("inside", animate=False)
+    house.setWindowOpacity(1.0)
+    ox, oy = (W - house.width()) // 2, H - house.height() - 6
+    house.move(ox, oy)
+    sleeper = ctrl._spawn(ctrl.next_id, "white")
+    walker = ctrl._spawn(ctrl.next_id + 1, "orange")
+    ctrl.next_id += 2
+    reset(sleeper, "white", 1)
+    sleeper.activity = "sleep"
+    sleeper._sleep_side = 0
+    sleeper.update()
+    flush()
+    sleep_pm = sleeper.grab()
+    U = house.U
+    _r.seed(3)
+    for i in range(24):
+        if i % 10 == 0:
+            house._puff()
+        house._animate()
+    frames = []
+    n = 56
+    lo, hi = 24, 58
+    for t in range(n):
+        if t % 10 == 0:
+            house._puff()
+        house._animate()
+        flush()
+        img = base.copy()
+        paste(img, house.grab(), ox, oy)
+        paste(img, sleep_pm, ox + (8 + 76) * U - sleeper.width() / 2, house.indoor_floor_y(sleeper))
+        span = (hi - lo) * 2
+        ph = (t * 1.25) % span
+        ax, d = (lo + ph, 1) if ph < hi - lo else (hi - (ph - (hi - lo)), 3)
+        pm = cat_frame(walker, "orange", d, (t // 2) % 3)
+        paste(img, pm, ox + (8 + ax) * U - walker.width() / 2, house.indoor_floor_y(walker))
+        frames.append(img)
+    house.anim.stop()
+    house.smoke.clear()
+    house.petals.clear()
+    for o in (sleeper, walker):
+        ctrl.cats.remove(o)
+        o.dispose()
+    house.set_view("outside", animate=False)
+    house.hide()
+    _unfreeze()
+    save_gif(frames, "inside.gif", 90)
+
+
 def gif_pomodoro():
     i18n.set_lang("en")
     W, H = 360, 200
@@ -783,6 +856,7 @@ if __name__ == "__main__":
     shot_play()
     gif_walk()
     gif_house()
+    gif_inside()
     gif_pomodoro()
     gif_patterns()
     ctrl.quit()
