@@ -392,7 +392,7 @@ def shot_patterns():
 
 def shot_palette():
     i18n.set_lang("en")
-    img = desktop(640, 620, seed=23)
+    img = desktop(860, 700, seed=23)
     cid = ctrl.add_custom_color((140, 190, 230), (230, 190, 60), "Blueberry")
     cid2 = ctrl.add_custom_color((245, 245, 245), (80, 150, 230), "", "calico")
     reset(cat, cid, 1)
@@ -401,10 +401,15 @@ def shot_palette():
     paste(img, cat.grab(), 130, 320)
     reset(cat, "orange", 1)
     ctrl.open_palette(cat)
-    ctrl.palette._pick_pattern("tuxedo")
-    ctrl.palette._pick_fur((80, 80, 90))
-    ctrl.palette._pick_eye((230, 190, 60))
-    ctrl.palette.name_edit.setText("Mochi")
+    pal = ctrl.palette
+    pal._pick_fur((150, 150, 158))
+    pal._toggle_extra("stripes")
+    pal._pick("stripes", (90, 90, 100))
+    pal._toggle_extra("white")
+    pal._pick_eye((80, 150, 230))
+    pal._toggle_odd()
+    pal._pick("eye2", (230, 190, 60))
+    pal.name_edit.setText("Mochi")
     flush()
     paste(img, ctrl.palette.grab(), 250, 40)
     ctrl.palette.hide()
