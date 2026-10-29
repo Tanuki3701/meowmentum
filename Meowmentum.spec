@@ -1,12 +1,14 @@
 # PyInstaller 設定：打包成 macOS 的 Meowmentum.app
 # 使用方式：bash build_mac.sh（不需要直接執行這個檔案）
+VERSION = {}
+exec(open("src/version.py").read(), VERSION)
 
 a = Analysis(
     ["src/main.py"],
     pathex=["src"],
     datas=[("assets/sprites", "assets/sprites"), ("assets/fonts", "assets/fonts"),
            ("assets/tray.png", "assets")],
-    excludes=["tkinter", "unittest", "pydoc", "PySide6.QtNetwork", "PySide6.QtQml",
+    excludes=["tkinter", "unittest", "pydoc", "PySide6.QtQml",
               "PySide6.QtQuick", "PySide6.QtWebEngineCore", "PySide6.QtMultimedia"],
 )
 pyz = PYZ(a.pure)
@@ -27,7 +29,8 @@ app = BUNDLE(
     info_plist={
         "LSUIElement": True,              # 不顯示 Dock 圖示
         "NSHighResolutionCapable": True,  # Retina 清晰顯示
-        "CFBundleShortVersionString": "4.0.0",
+        "CFBundleShortVersionString": VERSION["VERSION"],
+        "CFBundleVersion": VERSION["VERSION"],
         "CFBundleDisplayName": "Meowmentum",
     },
 )
