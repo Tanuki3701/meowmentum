@@ -19,12 +19,12 @@ Meowmentum is a tiny pixel cat that lives on your macOS desktop and keeps your m
 - **Treats with five flavors.** Drop a can from the top of the screen, and the cat runs over to eat it. Each flavor gets a different reaction. Tuna makes the cat happy, chicken makes it purr, salmon makes it jump for joy, catnip gives it the zoomies until it gets dizzy, and bitter melon makes it pull a face and walk away.
 - **Toys.** Take out a feather wand or a yarn ball, and every cat chases it and pounces.
 - **Cats play together.** With two or more cats, they chase each other, sniff each other, and groom each other. When it is time to nap, they squeeze together and sleep side by side.
-- **Names.** Give each cat a name. Hover over a cat to see its name tag.
+- **Names.** Give each cat a name. Right-click a cat to see its name at the top of its menu.
 - **A little gift.** If you are away for more than 20 minutes, your cat leaves a small gift next to it. Click the gift to collect it.
 
 ![Walking, playing, and the Pomodoro timer](docs/screenshots/walk.gif)
 
-![Toys, furniture, and name tags](docs/screenshots/play.png)
+![Toys, furniture, and accessories](docs/screenshots/play.png)
 
 ![Sleeping, petting, and feeding](docs/screenshots/sleep-pet-feed.png)
 
@@ -34,14 +34,16 @@ Meowmentum is a tiny pixel cat that lives on your macOS desktop and keeps your m
 
 ### Cat house
 
-- **Home sweet home.** Send one cat or every cat home. Inside, the cats take naps or peek out of the door and windows. Smoke always curls up from the chimney, and flower bushes by the door drift little petals now and then. When nobody is home, the door and windows stay closed. The house comes in small, medium, and large, and you can drag it anywhere.
-- **Look inside.** Double-click the house to look inside. The cats at home sleep on the cushion, eat from the bowl, walk around, and play. The room changes with the time of day, and the furniture you buy appears in the room.
+- **Home sweet home.** Send one cat or every cat home. Inside, the cats take naps or peek out of the door and windows. Smoke always curls up from the chimney, and flower bushes by the door drift little petals now and then. When nobody is home, the door and windows stay closed, and at night the closed windows turn dark. The house comes in small, medium, and large, and you can drag it anywhere.
+- **Look inside.** Double-click the house to see it as a cutaway dollhouse, right where the house stands on your desktop. The cats walk in through the door and live inside: they nap on the cushion, eat from the bowl, sit by the window, and wander around. You can still pick them up and play with them, and if you drag one out of the room it goes back to your desktop. The room changes with the time of day, and the furniture you buy appears in the room. Double-click again to go back outside.
 - **Day and night.** In the evening, the windows light up with warm lamps. Late at night, your cat yawns and reminds you to go to bed.
-- **Seasons and holidays.** The house decorates itself by the date. You will see pumpkins for Halloween, a wreath and lights for Christmas, snow in winter, spring couplets and lanterns for Lunar New Year, and cherry petals in spring. You can turn this off in Settings.
+- **Seasons and holidays.** The house decorates itself by the date. You will see pumpkins for Halloween, a wreath and lights for Christmas, snow piling up on the roof, chimney, and bushes in winter, spring couplets and lanterns for Lunar New Year, and cherry petals in spring. You can turn this off in Settings.
 
 ![Cat house](docs/screenshots/house.gif)
 
-![Inside the cat house](docs/screenshots/inside.png)
+![Inside the cat house](docs/screenshots/inside.gif)
+
+![Inside the cat house, day and night](docs/screenshots/inside.png)
 
 ![Day, night, Halloween, Christmas, and Lunar New Year](docs/screenshots/seasons.png)
 
@@ -84,7 +86,7 @@ Meowmentum is a tiny pixel cat that lives on your macOS desktop and keeps your m
 - **Menu bar icon.** A small cat icon in the macOS menu bar controls all cats together. Change every cat's mode or size, feed everyone, play with everyone, send everyone home, open the shop and stats, or start the Pomodoro timer.
 - **Hide all cats.** Press Control-Option-M anywhere to hide every cat, for example before a meeting or screen sharing. Press it again to bring them back. The cats also hide by themselves while an app is in full screen.
 - **Open at login.** Turn it on in Settings, and the cats are there every time you start your Mac.
-- **Low Power Mode.** When Low Power Mode is on, the cats move with fewer frames to save even more battery.
+- **Low Power Mode.** When Low Power Mode is on, the small extras such as drifting petals slow down to save battery. The cats still move smoothly.
 - **Multiple displays.** Wandering cats sometimes walk over to your other screen.
 - **Update check.** Once a day, Meowmentum checks GitHub for a new version and tells you when one is out. You can turn this off in Settings.
 
@@ -109,9 +111,9 @@ Meowmentum is a tiny pixel cat that lives on your macOS desktop and keeps your m
 | Sleeping | A sleeping cat only breathes once per second. |
 | Images | Sprites are cut, scaled, and cached once at startup. |
 | Battery | The battery is read once every 2 minutes. |
-| Cat house | The house animates only its own small window, with coalesced timers. When the house is hidden, it runs no timers at all. The room inside animates only while you are looking at it. |
+| Cat house | The house animates only its own small window, with coalesced timers. When the house is hidden, it runs no timers at all. The inside view is drawn in the same small window and animates only while you are looking at it. |
 | Toys and furniture | A toy follows the cursor only while it is out, and it is put away after 90 seconds. Furniture runs no timers. Cats check for furniture and friends only every 14 to 25 seconds. |
-| Low Power Mode | In Low Power Mode, cats redraw at half the frame rate. |
+| Low Power Mode | In Low Power Mode, the house's petal effects run less often. |
 | Dock mode | The Dock size is read from the Dock settings at most once every 20 seconds, and only in "Walk on the Dock" mode. |
 | Window detection | Window positions are read only in "Walk on windows" mode. Window contents are never read, so no screen-recording permission is needed. |
 
@@ -232,23 +234,25 @@ meowmentum/
 - **五種口味的罐罐**：天上會掉下一個罐頭，貓咪會跑過去吃，每種口味的反應都不一樣。鮪魚讓貓咪很開心，雞肉讓牠呼嚕呼嚕，鮭魚讓牠開心到跳起來。貓薄荷會讓牠瘋狂衝刺到頭暈，苦瓜則會讓牠皺眉走開。
 - **逗貓玩具**：拿出逗貓棒或毛線球，所有貓咪都會追過去撲。
 - **貓咪之間會互動**：養兩隻以上的貓時，牠們會互相追著跑、聞聞對方、幫對方理毛。要睡覺時還會擠在一起睡。
-- **取名字**：可以幫每隻貓取名字，滑鼠移到貓咪身上就會看到牠的名牌。
+- **取名字**：可以幫每隻貓取名字，在貓咪身上按右鍵，選單最上面就會看到牠的名字。
 - **小禮物**：離開電腦超過 20 分鐘，回來時貓咪旁邊會多一個小禮物，點一下就能收下。
 
 ![散步、玩耍和番茄鐘](docs/screenshots/walk.gif)
 
-![玩具、家具和名牌](docs/screenshots/play.png)
+![玩具、家具和飾品](docs/screenshots/play.png)
 
 #### 貓屋
 
-- **回家**：可以讓一隻或全部的貓回家。貓咪在家裡會睡覺，或從門窗探出頭來。煙囪一直都會冒著淡淡的煙，門口兩側的花叢偶爾會飄出小花瓣。沒有貓咪在家時門窗都會關起來。貓屋有大、中、小三種大小，可以拖到任何地方。
-- **進去看看**：在貓屋上按兩下就能看到屋子裡面。在家的貓咪會睡在軟墊上、吃飯、散步和玩耍。房間會跟著白天晚上變化，你在商店買的擺設也會出現在房間裡。
+- **回家**：可以讓一隻或全部的貓回家。貓咪在家裡會睡覺，或從門窗探出頭來。煙囪一直都會冒著淡淡的煙，門口兩側的花叢偶爾會飄出小花瓣。沒有貓咪在家時門窗都會關起來，晚上關著的窗戶會變成暗暗的夜色。貓屋有大、中、小三種大小，可以拖到任何地方。
+- **進去看看**：在貓屋上按兩下，貓屋會在桌面上原地變成像娃娃屋一樣的剖面，直接看到屋子裡面。貓咪會從門口走進去，在裡面睡在軟墊上、吃飯、坐在窗邊或走來走去。在屋裡一樣可以用滑鼠抓起貓咪和牠們玩，把貓咪拖到屋子外面，牠就會回到桌面上。房間會跟著白天晚上變化，你在商店買的擺設也會出現在房間裡。再按兩下就會回到外面。
 - **白天和晚上**：傍晚以後貓屋的窗戶會亮起暖暖的燈。深夜時貓咪會打哈欠，提醒你早點睡。
-- **節慶裝飾**：貓屋會依照日期自動換裝飾。萬聖節有南瓜，聖誕節有花圈和燈泡，冬天屋頂會積雪，農曆新年會貼春聯、掛燈籠，春天會飄粉紅色的花瓣。不想要的話可以在設定裡關掉。
+- **節慶裝飾**：貓屋會依照日期自動換裝飾。萬聖節有南瓜，聖誕節有花圈和燈泡，冬天屋頂、煙囪和花叢上會積起厚厚的雪，農曆新年會貼春聯、掛燈籠，春天會飄粉紅色的花瓣。不想要的話可以在設定裡關掉。
 
 ![貓屋](docs/screenshots/house.gif)
 
-![貓屋裡面](docs/screenshots/inside.png)
+![貓屋裡面](docs/screenshots/inside.gif)
+
+![貓屋裡面的白天和晚上](docs/screenshots/inside.png)
 
 ![白天、晚上、萬聖節、聖誕節和農曆新年](docs/screenshots/seasons.png)
 
@@ -281,7 +285,7 @@ meowmentum/
 - **選單列圖示**：螢幕最上方的選單列有一個小貓圖示，可以一次控制全部的貓。可以切換全部貓咪的模式和大小、餵全部的貓、陪大家玩、讓大家回家、打開商店和紀錄，或開始番茄鐘。
 - **一鍵藏起所有貓**：在任何地方按 Control-Option-M 就能把所有貓藏起來，開會或分享螢幕前很方便，再按一次就會回來。App 進入全螢幕時，貓咪也會自動藏起來。
 - **開機自動打開**：在設定裡打開後，每次開機貓咪都會出現。
-- **低耗電模式**：Mac 開啟低耗電模式時，貓咪的動畫會放慢，更省電。
+- **低耗電模式**：Mac 開啟低耗電模式時，飄花瓣這類小特效會放慢來省電，貓咪還是一樣走得很順。
 - **多螢幕**：隨意漫步的貓咪偶爾會走到另一個螢幕。
 - **檢查更新**：每天會到 GitHub 檢查一次有沒有新版本，有的話貓咪會告訴你。不需要的話可以在設定裡關掉。
 
