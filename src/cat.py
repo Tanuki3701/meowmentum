@@ -840,10 +840,24 @@ class Cat(QWidget):
         self._fade(1.0, 300, shown)
 
     # ---------------- 在貓屋裡面 ---------------- #
+    def use_room_scale(self, unit):
+        """在房間裡：貓咪換成和房間一樣的像素大小（不會改到自己的大小設定）。"""
+        unit = unit if unit else int(self._pref("scale", 3))
+        if unit != self.scale:
+            self.scale = unit
+            self._build_frames()
+
+    def _restore_scale(self):
+        saved = int(self._pref("scale", 3))
+        if self.scale != saved:
+            self.scale = saved
+            self._build_frames()
+
     def enter_indoor(self, house, from_door=False):
         """貓屋換成「裡面」的樣子：在家的貓咪出現在房間裡，可以點、拖、按右鍵。"""
         self._stop_all()
         self.indoor = house
+        self.use_room_scale(house.U)
         self.activity = None
         self.expression = None
         lo, hi = house.indoor_x_range(self)
@@ -864,6 +878,7 @@ class Cat(QWidget):
         self._indoor_kind = None
         if self.activity == "sleep":
             self.act_timer.stop()
+        self._restore_scale()
         self.activity = "home"
         self.expression = None
         self.hide()
@@ -879,6 +894,7 @@ class Cat(QWidget):
         def outside():
             self.indoor = None
             self.hide()
+            self._restore_scale()
             self._walk_out(house)
         self._fade(0.0, 260, outside)
 
@@ -886,6 +902,10 @@ class Cat(QWidget):
         house, self.indoor = self.indoor, None
         self.indoor_timer.stop()
         self._indoor_kind = None
+        if house is not None:
+            bottom = self.y() + self.height()
+            self._restore_scale()
+            self._move_to(self.x(), bottom - self.height(), clamp=False)
         if house is not None:
             house.remove(self)
 
@@ -1033,7 +1053,7 @@ class Cat(QWidget):
         menu.sub("facing", tr("facing")).choices(
             {d: tr(k) for d, k in DIRECTIONS.items()}, self.idle_direction, self.set_idle_direction)
         menu.sub("size", tr("size")).choices(
-            {z: tr(f"size_{z}") for z in SIZES}, self.scale, self.set_scale)
+            {z: tr(f"size_{z}") for z in SIZES}, int(self._pref("scale", 3)), self.set_scale)
 
     # ---------------- 名字、飾品、生氣 ---------------- #
     def display_name(self):
@@ -1224,8 +1244,10 @@ class Cat(QWidget):
 
     def set_scale(self, scale):
         bottom = self.y() + self.height()
-        self.scale = scale
         self._save("scale", scale)
+        if self.indoor is not None:          # 在房間裡就先維持房間的大小，出來再換
+            return
+        self.scale = scale
         self._build_frames()
         self._move_to(self.x(), bottom - self.height())
         if self.mode == "windows":

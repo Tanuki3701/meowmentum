@@ -13,8 +13,22 @@ def now():
 
 
 def is_night(t=None):
+    return phase(t) == "night"
+
+
+# 一天的四個時段：早上、白天、傍晚、晚上
+PHASES = ["morning", "day", "dusk", "night"]
+
+
+def phase(t=None):
     h = (t or now()).hour
-    return h >= 18 or h < 6
+    if 6 <= h < 11:
+        return "morning"
+    if 11 <= h < 17:
+        return "day"
+    if 17 <= h < 19:
+        return "dusk"
+    return "night"
 
 
 def is_late_night(t=None):

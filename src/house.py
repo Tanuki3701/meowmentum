@@ -22,6 +22,7 @@ from i18n import tr
 from macos import show_on_all_spaces
 
 SIZES = {"small": 2, "medium": 3, "large": 4}
+INSIDE_SIZES = {"same": None, "large": 4, "xlarge": 5, "huge": 6}   # 看裡面時可以放得更大
 MX, MY = 8, 18             # 圖的左右留白、上方留白（給花瓣和煙飄）
 AW, AH = sprites.HOUSE_W, sprites.HOUSE_H
 GROUND = sprites.HOUSE_GROUND
@@ -78,8 +79,10 @@ class House(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         size = str(ctrl.settings.value("house_size", "medium"))
         self.size_name = size if size in SIZES else "medium"
-        self.U = SIZES[self.size_name]
+        isize = str(ctrl.settings.value("inside_size", "same"))
+        self.inside_size = isize if isize in INSIDE_SIZES else "same"
         self.view = "outside"
+        self.U = self._unit_for(self.view)
         self._resize_for_view()
         self.residents = []        # 在家的貓
         self.state = {}            # 外面看：cat -> {"slot", "mode": peek/sleep, "rise": 0..6}
@@ -120,6 +123,11 @@ class House(QWidget):
     @property
     def V(self):
         return VIEWS[self.view]
+
+    def _unit_for(self, view):
+        if view == "inside" and INSIDE_SIZES[self.inside_size]:
+            return INSIDE_SIZES[self.inside_size]
+        return SIZES[self.size_name]
 
     def _resize_for_view(self):
         v = self.V
@@ -172,15 +180,40 @@ class House(QWidget):
         if name not in SIZES or name == self.size_name:
             return
         anchor = self._anchor()
-        self.size_name, self.U = name, SIZES[name]
+        self.size_name = name
+        self.U = self._unit_for(self.view)
         self._resize_for_view()
         self._place_at(anchor)
         self.ctrl.settings.setValue("house_size", name)
+        self._rescale_indoor()
         self.ctrl.settings.setValue("house_pos", self.pos())
         self.petals.clear()
         self.smoke.clear()
         self._sync_cats()
         self.update()
+
+    def set_inside_size(self, name):
+        if name not in INSIDE_SIZES or name == self.inside_size:
+            return
+        self.inside_size = name
+        self.ctrl.settings.setValue("inside_size", name)
+        if self.view != "inside":
+            return
+        anchor = self._anchor()
+        self.U = self._unit_for("inside")
+        self._resize_for_view()
+        self._place_at(anchor)
+        self.petals.clear()
+        self.smoke.clear()
+        self._rescale_indoor()
+        self.update()
+
+    def _rescale_indoor(self):
+        """房間裡的貓咪和房間用同一個像素大小，看起來才像住在裡面。"""
+        for cat in self.residents:
+            if cat.indoor is self:
+                cat.use_room_scale(self.U)
+        self._sync_cats()
 
     # ---------------- 外面 ↔ 裡面 ---------------- #
     def toggle_view(self):
@@ -212,6 +245,7 @@ class House(QWidget):
         anchor = self._anchor()
         old = self.view
         self.view = view
+        self.U = self._unit_for(view)
         self._resize_for_view()
         self._place_at(anchor)
         self.petals.clear()
@@ -403,7 +437,8 @@ class House(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         u = self.U
-        night = seasons.is_night()
+        phase = seasons.phase()
+        night = phase == "night"
         deco = seasons.decorations() if self.ctrl.seasonal else set()
         # 煙（畫在房子後面，像從煙囪裡冒出來）：像素圓，淺灰外框 + 白色內裡
         for x, y, r, life, mx in self.smoke:
@@ -416,13 +451,13 @@ class House(QWidget):
                     if d <= r:
                         self._px(p, int(round(x)) + i, int(round(y)) + j, edge if d > r - 1.0 else fill)
         if self.view == "inside":
-            p.drawPixmap(MX * u, MY * u, interior.dollhouse(self.ctrl.progress.owned, night, deco, u))
+            p.drawPixmap(MX * u, MY * u, interior.dollhouse(self.ctrl.progress.owned, phase, deco, u))
             if "snow" in deco:
                 self._paint_snow(p, _inside_roof(), (interior.CHIMNEY[0] - 4, 0, 9),
                                  [(-4, interior.GRASS - 8, True, False), (interior.IW - 14, interior.GRASS - 8, True, True)],
                                  interior.GRASS, interior.IW, [], icicles=(6, 18, 30, 73, 88, 97), eave=interior.EAVE + 1)
         else:
-            self._paint_outside(p, night, deco)
+            self._paint_outside(p, phase, deco)
         # 花瓣（畫在最前面）
         for x, y, _vx, _vy, ph, color, life in self.petals:
             c = QColor(color)
@@ -431,7 +466,7 @@ class House(QWidget):
             w, h = (2, 2) if flip > 0.35 else ((2, 1) if flip > -0.4 else (1, 1))
             self._px(p, int(round(x)), int(round(y)), c, w, h)
 
-    def _paint_outside(self, p, night, deco):
+    def _paint_outside(self, p, phase, deco):
         u = self.U
         # 門窗平常關著；有貓咪待著的那一格才打開（貓咪進出時，門也會開一下）
         p.drawPixmap(MX * u, MY * u, sprites.house(u, closed=True))
@@ -444,8 +479,8 @@ class House(QWidget):
             x, y, w, h = sprites.HOUSE_SLOTS[key]
             p.drawPixmap(self._art_rect(x, y, w, h), opened,
                          QRect(int(x * u * dpr), int(y * u * dpr), int(w * u * dpr), int(h * u * dpr)))
-        if night:
-            self._paint_night(p, used)
+        if phase != "day":
+            self._paint_glass(p, used, phase)
         if deco:
             self._paint_decor(p, used, deco)
         for cat, st in self.state.items():
@@ -466,19 +501,31 @@ class House(QWidget):
                 zh = zz.height() / zz.devicePixelRatio()
                 p.drawPixmap(hole.right() - u, int(hole.top() - zh - u - bob), zz)
 
-    def _paint_night(self, p, used):
-        """晚上：關著的窗戶是暗暗的深藍色玻璃，映著一點點星光。"""
-        frame = QColor(206, 206, 222)
+    # 關著的窗戶玻璃映著天色：(上, 下, 反光, 點綴)
+    GLASS = {
+        "morning": ((255, 184, 156), (160, 200, 246), (255, 250, 240), (255, 238, 190)),
+        "dusk": ((128, 92, 170), (248, 150, 104), (255, 210, 170), (255, 230, 150)),
+        "night": ((30, 36, 78), (52, 60, 112), (120, 140, 200), (255, 244, 200)),
+    }
+
+    def _paint_glass(self, p, used, phase):
+        """早上、傍晚、晚上：關著的窗戶映出那時候的天色（晚上是暗暗的深藍色，帶一點星光）。"""
+        top, bot, glint, dot = self.GLASS[phase]
+        frame = QColor(206, 206, 222) if phase == "night" else QColor(250, 246, 240)
         for key in ("left", "right", "attic"):
             if key in used:
                 continue
             x, y, w, h = sprites.HOUSE_SLOTS[key]
             for i in range(h):
                 t = i / max(1, h - 1)
-                c = QColor(int(30 + 22 * t), int(36 + 24 * t), int(78 + 34 * t))
-                self._px(p, x, y + i, c, w, 1)
-            self._px(p, x + 1, y + 1, QColor(120, 140, 200))           # 一點反光
-            self._px(p, x + w - 3, y + h - 2, QColor(255, 244, 200))   # 一顆星星的倒影
+                self._px(p, x, y + i, QColor(*(int(a + (b - a) * t) for a, b in zip(top, bot))), w, 1)
+            self._px(p, x + 1, y + 1, QColor(*glint))
+            if phase == "night":
+                self._px(p, x + w - 3, y + h - 2, QColor(*dot))            # 一顆星星的倒影
+            else:
+                self._px(p, x + 2, y + 1, QColor(*glint))                  # 斜斜的反光
+                self._px(p, x + 1, y + 2, QColor(*glint))
+                self._px(p, x + w - 3, y + h - 3, QColor(*dot))
             self._px(p, x + w // 2, y, frame, 1, h)
             if key != "attic":
                 self._px(p, x, y + h // 2, frame, w, 1)
@@ -619,6 +666,8 @@ class House(QWidget):
             menu.item("home", tr("go_home_all"), self.ctrl.go_home_all)
         menu.sub("size", tr("house_size")).choices(
             {k: tr("hsize_" + k) for k in SIZES}, self.size_name, self.set_size)
+        menu.sub("size", tr("inside_size")).choices(
+            {k: tr("isize_" + k) for k in INSIDE_SIZES}, self.inside_size, self.set_inside_size)
 
     def contextMenuEvent(self, e):
         from glassmenu import GlassMenu

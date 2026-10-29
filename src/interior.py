@@ -214,8 +214,20 @@ def item_preview(item, unit=2):
 
 
 # ---------------- 整間屋子的剖面 ---------------- #
-def dollhouse(owned, night, deco, unit):
-    key = ("dollhouse", tuple(sorted(owned)), night, tuple(sorted(deco)), unit)
+SKY = {                      # 窗外天空：(上, 下)
+    "morning": ((255, 196, 176), (255, 236, 196)),
+    "day": ((150, 210, 250), (214, 238, 255)),
+    "dusk": ((112, 84, 168), (252, 156, 104)),
+    "night": ((22, 26, 62), (52, 58, 112)),
+}
+
+
+def dollhouse(owned, phase, deco, unit):
+    if phase is True or phase is False:          # 舊的呼叫方式：night = True/False
+        phase = "night" if phase else "day"
+    night = phase == "night"
+    lit = phase in ("dusk", "night")             # 傍晚就開燈
+    key = ("dollhouse", tuple(sorted(owned)), phase, tuple(sorted(deco)), unit)
     if key in art._cache:
         return art._cache[key]
     c = _Canvas(IW, IH, unit)
@@ -259,7 +271,7 @@ def dollhouse(owned, night, deco, unit):
     c.rect(37, 19, 30, 1, "attic_d")
     # 閣樓裡的小東西：一盞小燈和一個毛線籃
     c.rect(44, 19, 1, 2, "K")
-    c.rect(43, 21, 3, 2, (255, 226, 140) if night else (236, 200, 120))
+    c.rect(43, 21, 3, 2, (255, 226, 140) if lit else (236, 200, 120))
     c.rect(56, 21, 6, 3, "K"); c.rect(57, 21, 4, 2, (214, 168, 112)); c.px(58, 20, "P"); c.px(59, 20, "V")
     # 屋簷 + 天花板的樑
     c.rect(0, EAVE, IW, 2, "K")
@@ -286,15 +298,28 @@ def dollhouse(owned, night, deco, unit):
     c.rect(ROOM_L, IG - 2, ROOM_R - ROOM_L + 1, 2, "wood")
     c.rect(ROOM_L, IG - 2, ROOM_R - ROOM_L + 1, 1, "wood_l")
 
-    # 窗戶：白天藍天白雲，晚上深藍夜空、月亮和星星
+    # 窗戶：早上粉橘色的晨光、白天藍天白雲、傍晚紫橘色的夕陽、晚上深藍夜空和月亮星星
     wx, wy, ww, wh = 37, 31, 22, 16
     c.rect(wx - 2, wy - 2, ww + 4, wh + 4, "K")
     c.rect(wx - 1, wy - 1, ww + 2, wh + 2, "Cr")
-    top_c, bot_c = ((150, 210, 250), (214, 238, 255)) if not night else ((22, 26, 62), (52, 58, 112))
+    top_c, bot_c = SKY[phase]
     for i in range(wh):
         t = i / (wh - 1)
         c.rect(wx, wy + i, ww, 1, tuple(int(a + (b - a) * t) for a, b in zip(top_c, bot_c)))
-    if night:
+    if phase == "morning":                       # 剛升起來的太陽和淡淡的雲
+        c.rect(wx + 4, wy + 10, 5, 4, (255, 246, 214)); c.rect(wx + 5, wy + 9, 3, 6, (255, 246, 214))
+        c.rect(wx + 5, wy + 10, 3, 4, (255, 255, 236))
+        c.rect(wx + 12, wy + 4, 6, 2, (255, 236, 236)); c.rect(wx + 13, wy + 3, 3, 1, (255, 236, 236))
+        c.rect(wx + 1, wy + wh - 2, ww - 2, 2, (182, 214, 160))       # 遠方的山丘
+        c.rect(wx + 9, wy + wh - 3, 8, 1, (182, 214, 160))
+    elif phase == "dusk":                        # 夕陽一半沉到山後面，天邊有一抹雲
+        c.rect(wx + 12, wy + 9, 6, 4, (255, 214, 120)); c.rect(wx + 13, wy + 8, 4, 1, (255, 214, 120))
+        c.rect(wx + 13, wy + 9, 4, 3, (255, 236, 160))
+        c.rect(wx + 2, wy + 6, 7, 1, (236, 140, 150)); c.rect(wx + 4, wy + 5, 3, 1, (236, 140, 150))
+        c.px(wx + 4, wy + 2, (255, 236, 200))
+        c.rect(wx, wy + wh - 3, ww, 3, (92, 64, 110))
+        c.rect(wx + 6, wy + wh - 4, 7, 1, (92, 64, 110))
+    elif night:
         c.rect(wx + 15, wy + 2, 4, 4, (255, 240, 190))
         c.rect(wx + 17, wy + 2, 2, 3, (22, 26, 62))
         for sx, sy in ((wx + 3, wy + 3), (wx + 8, wy + 1), (wx + 6, wy + 9), (wx + 19, wy + 11), (wx + 12, wy + 6)):
@@ -316,11 +341,14 @@ def dollhouse(owned, night, deco, unit):
     c.rect(wx - 6, wy - 4, ww + 12, 2, "K")
     c.rect(wx - 5, wy - 4, ww + 10, 1, "wood")
 
-    # 白天：從窗戶斜斜照進來的光
-    if not night:
+    # 白天：從窗戶斜斜照進來的光（早上偏粉橘、傍晚偏橘紅，斜得更厲害）
+    if phase != "night":
+        beam = {"morning": (QColor(255, 226, 196, 52), 2), "day": (QColor(255, 255, 230, 46), 2),
+                "dusk": (QColor(255, 170, 110, 46), 1)}[phase]
         for i in range(IG - (wy + wh + 3)):
             y = wy + wh + 3 + i
-            c.rect(wx + 2 + i // 2, y, ww - 4, 1, QColor(255, 255, 230, 46))
+            shift = i // 2 if beam[1] == 2 else -i
+            c.rect(wx + 2 + shift, y, ww - 4, 1, beam[0])
 
     # 室內的門（粉紅木門 + 精緻的貓掌）
     dx, dy, dw, dh = DOOR
@@ -344,8 +372,8 @@ def dollhouse(owned, night, deco, unit):
     # 天花板的吊燈（一直都在；晚上會亮）
     c.rect(26, EAVE + 5, 1, 4, "K")
     c.rect(24, EAVE + 9, 5, 2, "K")
-    c.rect(25, EAVE + 9, 3, 1, (255, 236, 170) if night else (236, 214, 170))
-    c.px(26, EAVE + 11, (255, 236, 170) if night else "K")
+    c.rect(25, EAVE + 9, 3, 1, (255, 236, 170) if lit else (236, 214, 170))
+    c.px(26, EAVE + 11, (255, 236, 170) if lit else "K")
 
     # 側牆的剖面（看得到牆的厚度）
     for x0 in (ROOM_L - 4, ROOM_R + 1):
@@ -373,7 +401,7 @@ def dollhouse(owned, night, deco, unit):
     items = [i for i in ("painting", "fishtank", "plant", "scratcher", "lamp", "rug", "yarn") if i in owned]
     for it in ("painting", "fishtank", "plant", "scratcher", "lamp"):
         if it in items:
-            draw_item(c, it, night)
+            draw_item(c, it, lit)
     if "rug" in items:
         draw_item(c, "rug")
     if "xmas" in deco:
@@ -392,6 +420,18 @@ def dollhouse(owned, night, deco, unit):
             c.px(x, EAVE + 5, cols[i % 4])
         c.grid(dx + 2, dy - 1, art.WREATH)
 
+    # 早上：整間屋子帶一點粉橘色的晨光
+    if phase == "morning":
+        c.rect(ROOM_L, top, ROOM_R - ROOM_L + 1, IG - top + 3, QColor(255, 170, 140, 22))
+    # 傍晚：房間染上夕陽的橘色，燈也亮起來了
+    if phase == "dusk":
+        room = (ROOM_L, ROOM_R, top, IG + 3)
+        c.rect(ROOM_L, top, ROOM_R - ROOM_L + 1, IG - top + 3, QColor(240, 110, 60, 40))
+        glow(c, 26, EAVE + 13, 12, alphas=(46, 30, 16), clip=room)
+        if "lamp" in owned:
+            glow(c, 87, 47, 10, alphas=(46, 30, 16), clip=room)
+            c.rect(84, 41, 6, 4, (255, 240, 190))
+        c.rect(25, EAVE + 9, 3, 2, (255, 244, 200))
     # 晚上：房間變暗偏藍，吊燈和立燈照出一圈一圈的暖光
     if night:
         room = (ROOM_L, ROOM_R, top, IG + 3)

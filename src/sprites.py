@@ -83,28 +83,73 @@ def _shift(rgb, dl=0.0, ds=0.0, dh=0.0):
     return int(r * 255), int(g * 255), int(b * 255)
 
 
-PATTERNS = ["solid", "tabby", "tuxedo", "calico", "spots"]
+PATTERNS = ["solid", "tabby", "tuxedo", "calico", "spots"]    # 舊版的花紋名稱（設定檔相容用）
+BASES = ["solid", "calico", "spots"]     # 底色花紋（三選一）
+EXTRAS = ["stripes", "white"]            # 可以疊在任何底色上的：虎斑條紋、賓士白
 PATTERN_DEFAULTS = {          # 花紋的預設顏色（p1、p2）
     "tabby": ((110, 70, 50), None),
     "tuxedo": ((246, 244, 240), None),
     "calico": ((222, 130, 60), (60, 52, 56)),
     "spots": ((60, 52, 56), None),
 }
+WHITE_DEFAULT = (246, 244, 240)
 
 
-def derive_spec(fur, eye=None, pattern="solid", p1=None, p2=None):
-    """從一個毛色（和眼睛顏色、花紋）推出整組像素調色盤。"""
+def stripe_default(fur):
+    """虎斑條紋的預設顏色：比毛色深一階。"""
+    return _shift(tuple(fur), -0.26, 0.02, -0.01)
+
+
+def normalize_look(pattern="solid", p1=None, p2=None, stripes=None, white=None):
+    """把舊的單一花紋（tabby / tuxedo）轉成新的「底色花紋 + 條紋 + 白色」組合。"""
+    base = pattern
+    if pattern == "tabby":
+        base, stripes = "solid", stripes or p1 or PATTERN_DEFAULTS["tabby"][0]
+        p1 = p2 = None
+    elif pattern == "tuxedo":
+        base, white = "solid", white or p1 or WHITE_DEFAULT
+        p1 = p2 = None
+    if base not in BASES:
+        base = "solid"
+    return base, p1, p2, stripes, white
+
+
+def derive_spec(fur, eye=None, pattern="solid", p1=None, p2=None, stripes=None, white=None, eye2=None):
+    """從毛色、眼睛顏色（可以兩眼不同）和花紋推出整組像素調色盤。
+
+    花紋可以自由組合：底色花紋（純色 / 三花 / 斑點）上面還能再加虎斑條紋和賓士白。
+    """
     sp = _derive_base(fur, eye)
-    if pattern in PATTERN_DEFAULTS:
-        d1, d2 = PATTERN_DEFAULTS[pattern]
+    base, p1, p2, stripes, white = normalize_look(pattern, p1, p2, stripes, white)
+    layers = []
+    if base in PATTERN_DEFAULTS:
+        d1, d2 = PATTERN_DEFAULTS[base]
         p1 = tuple(p1) if p1 else d1
         p2 = tuple(p2) if p2 else d2
-        sp["pattern"] = pattern
+        layers.append(base)
         sp["A"], sp["a"] = p1, _shift(p1, 0.08, 0.02)
-        if pattern == "tabby":                 # 條紋：同一個顏色，不用亮面
-            sp["a"] = p1
         if p2:
             sp["B"], sp["b"] = p2, _shift(p2, 0.08, 0.02)
+    if stripes:
+        layers.append("stripes")
+        sp["S"] = tuple(stripes)
+    if white:
+        layers.append("white")
+        sp["T"], sp["t"] = tuple(white), _shift(tuple(white), 0.05, 0.0)
+    if layers:
+        sp["pattern"] = tuple(layers)
+    if eye2 and tuple(eye2) != tuple(eye or INK):
+        eye2 = tuple(eye2)
+        sp["E2"], sp["F2"] = eye2, (_shift(eye2, 0.15) if eye2 != INK else INK)
+    return sp
+
+
+def swap_eyes(sp):
+    """左右相反的圖（鏡像）要把兩隻眼睛的顏色對調，異色瞳才不會換邊。"""
+    if "E2" not in sp:
+        return sp
+    sp = dict(sp)
+    sp["E"], sp["E2"], sp["F"], sp["F2"] = sp["E2"], sp["E"], sp["F2"], sp["F"]
     return sp
 
 
@@ -130,10 +175,12 @@ def _recolor(img, sp, groups=None):
     for ch in SEM[1:]:
         rgb = (255, 255, 255) if ch == "W" else sp[ch]
         table.append(QColor(*rgb).rgba())
-    for ch in "AaBb":            # 花紋用的額外顏色（索引 10~13）
+    for ch in "AaBbSTt":         # 花紋用的額外顏色（索引 10~16）
         table.append(QColor(*sp.get(ch, sp["M"])).rgba())
-    if sp.get("pattern") and groups:
-        out = _apply_pattern(out, sp["pattern"], groups)
+    table.append(QColor(*sp.get("E2", sp["E"])).rgba())      # 17、18：另一隻眼睛
+    table.append(QColor(*sp.get("F2", sp["F"])).rgba())
+    if (sp.get("pattern") or "E2" in sp) and groups:
+        out = _apply_pattern(out, sp, groups)
     table += [0] * (max(out.colorCount(), 256) - len(table))
     out.setColorTable(table[:max(out.colorCount(), 256)])
     return out
@@ -141,7 +188,8 @@ def _recolor(img, sp, groups=None):
 
 # ---------------- 花紋 ---------------- #
 _M, _L = SEM.index("M"), SEM.index("L")
-_A, _Aa, _B, _Bb = 10, 11, 12, 13
+_E, _F = SEM.index("E"), SEM.index("F")
+_A, _Aa, _B, _Bb, _S, _T, _Tt, _E2, _F2 = 10, 11, 12, 13, 14, 15, 16, 17, 18
 
 
 def _noise(x, y, g, salt):
@@ -159,50 +207,84 @@ def _noise(x, y, g, salt):
     return top * (1 - fy) + bot * fy
 
 
-def _apply_pattern(img, pattern, groups):
-    """groups：[(rects, mirror)]；同一組的格子（同方向的走路格）共用同一套花紋座標。"""
+def _split_eyes(img, rx, ry, rw, rh):
+    """異色瞳：把畫面右邊那隻眼睛換成第二個眼睛顏色。
+
+    正面看得到兩隻眼睛，右邊那團換色；側面只看得到一隻，看貓臉朝哪邊決定。
+    """
+    eyes, body = [], []
+    for y in range(rh):
+        for x in range(rw):
+            idx = img.pixelIndex(rx + x, ry + y)
+            if idx:
+                body.append(x)
+            if idx in (_E, _F):
+                eyes.append((x, y, idx))
+    if not eyes:
+        return
+    xs = sorted({x for x, _, _ in eyes})
+    cut = None
+    for a, b in zip(xs, xs[1:]):
+        if b - a > 1:
+            cut = b                      # 兩團眼睛中間的空隙
+    if cut is None:                      # 側面：眼睛在身體中心的右邊 = 臉朝右
+        center = sum(body) / len(body)
+        cut = 0 if sum(xs) / len(xs) > center else rw
+    for x, y, idx in eyes:
+        if x >= cut:
+            img.setPixel(rx + x, ry + y, _E2 if idx == _E else _F2)
+
+
+def _apply_pattern(img, sp, groups):
+    """groups：[(rects, mirror)]；同一組的格子（同方向的走路格）共用同一套花紋座標。
+
+    花紋一層一層疊上去：底色花紋（三花 / 斑點）→ 虎斑條紋 → 賓士白（胸口、肚子和腳掌）。
+    """
     img = img.convertToFormat(QImage.Format_Indexed8, img.colorTable()) \
         if img.format() != QImage.Format_Indexed8 else QImage(img)
+    layers = sp.get("pattern") or ()
+    if isinstance(layers, str):
+        layers = (layers,)
     for rects, mirror in groups:
-        # 每一欄毛的上下範圍（取同組所有格子的聯集，走路時花紋才不會跳）
-        w = max(r[2] for r in rects)
-        top, bot = [99] * w, [-1] * w
-        for rx, ry, rw, rh in rects:
-            for x in range(rw):
-                for y in range(rh):
-                    if img.pixelIndex(rx + x, ry + y) in (_M, _L):
-                        top[x] = min(top[x], y)
-                        bot[x] = max(bot[x], y)
-        for rx, ry, rw, rh in rects:
-            for x in range(rw):
-                if bot[x] < 0:
-                    continue
-                span = max(1, bot[x] - top[x])
-                nx = (rw - 1 - x) if mirror else x
-                for y in range(rh):
-                    idx = img.pixelIndex(rx + x, ry + y)
-                    if idx not in (_M, _L):
+        if layers:
+            # 每一欄毛的上下範圍（取同組所有格子的聯集，走路時花紋才不會跳）
+            w = max(r[2] for r in rects)
+            top, bot = [99] * w, [-1] * w
+            for rx, ry, rw, rh in rects:
+                for x in range(rw):
+                    for y in range(rh):
+                        if img.pixelIndex(rx + x, ry + y) in (_M, _L):
+                            top[x] = min(top[x], y)
+                            bot[x] = max(bot[x], y)
+            for rx, ry, rw, rh in rects:
+                for x in range(rw):
+                    if bot[x] < 0:
                         continue
-                    v = (y - top[x]) / span          # 0 = 這一欄最上面，1 = 最下面（肚子、腳）
-                    light = idx == _L
-                    new = None
-                    if pattern == "tuxedo":
-                        if v > 0.58:
-                            new = _Aa if light else _A
-                    elif pattern == "tabby":
-                        if v < 0.72 and (nx + y // 3) % 3 == 0:
-                            new = _A
-                    elif pattern == "calico":
-                        if v < 0.7:
+                    span = max(1, bot[x] - top[x])
+                    nx = (rw - 1 - x) if mirror else x
+                    for y in range(rh):
+                        idx = img.pixelIndex(rx + x, ry + y)
+                        if idx not in (_M, _L):
+                            continue
+                        v = (y - top[x]) / span          # 0 = 這一欄最上面，1 = 最下面（肚子、腳）
+                        light = idx == _L
+                        new = None
+                        if "calico" in layers and v < 0.7:
                             if _noise(nx, y, 5.0, 7) > 0.56:
                                 new = _Aa if light else _A
                             elif _noise(nx, y, 4.5, 19) > 0.6:
                                 new = _Bb if light else _B
-                    elif pattern == "spots":
-                        if _noise(nx, y, 4.0, 31) > 0.62:
+                        if "spots" in layers and _noise(nx, y, 4.0, 31) > 0.62:
                             new = _Aa if light else _A
-                    if new is not None:
-                        img.setPixel(rx + x, ry + y, new)
+                        if "stripes" in layers and v < 0.72 and (nx + y // 3) % 3 == 0:
+                            new = _S
+                        if "white" in layers and v > 0.58:
+                            new = _Tt if light else _T
+                        if new is not None:
+                            img.setPixel(rx + x, ry + y, new)
+        if "E2" in sp:
+            for rect in rects:
+                _split_eyes(img, *rect)
     return img
 
 
@@ -298,14 +380,17 @@ def cat_frames(color, scale, hat=None, neck=None):
 
         def both(name, groups, n, view):
             base = _image(name)
-            img = _recolor(base, sp, groups)
-            right = []
-            for i in range(n):
-                fr = img.copy(i * FRAME_W, 0, FRAME_W, FRAME_H)
-                fr = _dress(fr, _head_anchor(base, i * FRAME_W, 0, view), view, hat, neck)
-                right.append(fr)
-            return [[_scaled(x, scale) for x in right],
-                    [_scaled(x.transformed(mirror), scale) for x in right]]
+            out = []
+            for s_ in (sp, swap_eyes(sp)):       # 鏡像那一組用對調過的眼睛顏色
+                img = _recolor(base, s_, groups)
+                frames = []
+                for i in range(n):
+                    fr = img.copy(i * FRAME_W, 0, FRAME_W, FRAME_H)
+                    fr = _dress(fr, _head_anchor(base, i * FRAME_W, 0, view), view, hat, neck)
+                    frames.append(fr)
+                out.append(frames)
+            return [[_scaled(x, scale) for x in out[0]],
+                    [_scaled(x.transformed(mirror), scale) for x in out[1]]]
 
         sleep = both("base_sleep.png", SLEEP_GROUPS, 2, "sleep")
         ex = both("base_expr.png", EXPR_GROUPS, len(EXPRESSIONS), "right")
@@ -324,10 +409,20 @@ def face(color, kind="face", scale=1.0):
     return _cache[key]
 
 
-def preview_image(sp, scale):
-    """調色盤預覽：直接用一組顏色畫出側面站姿。"""
-    img = _recolor(_image("base_walk.png"), sp, WALK_GROUPS).copy(FRAME_W, FRAME_H, FRAME_W, FRAME_H)
-    return _scaled(img, scale)
+def preview_image(sp, scale, front=False):
+    """調色盤預覽：直接用一組顏色畫出側面站姿（front=True 時旁邊再加一隻正面，看得到兩隻眼睛）。"""
+    walk = _recolor(_image("base_walk.png"), sp, WALK_GROUPS)
+    side = walk.copy(FRAME_W, FRAME_H, FRAME_W, FRAME_H)
+    if not front:
+        return _scaled(side, scale)
+    from PySide6.QtGui import QPainter
+    both = QImage(FRAME_W * 2, FRAME_H, QImage.Format_ARGB32)
+    both.fill(0)
+    p = QPainter(both)
+    p.drawImage(0, 0, walk.copy(FRAME_W, FRAME_H * 2, FRAME_W, FRAME_H))
+    p.drawImage(FRAME_W, 0, side)
+    p.end()
+    return _scaled(both, scale)
 
 
 # ---------------- 特效 / 貓屋 ---------------- #

@@ -572,7 +572,8 @@ class Controller(QObject):
 
     @staticmethod
     def _spec_of(c):
-        return sprites.derive_spec(c["fur"], c["eye"], c.get("pattern", "solid"), c.get("p1"), c.get("p2"))
+        return sprites.derive_spec(c["fur"], c["eye"], c.get("pattern", "solid"), c.get("p1"), c.get("p2"),
+                                   c.get("stripes"), c.get("white"), c.get("eye2"))
 
     def _save_custom_colors(self):
         self.settings.setValue("custom_colors", json.dumps(self.custom_colors))
@@ -598,25 +599,34 @@ class Controller(QObject):
     def open_palette(self, cat):
         self.palette.open_for(cat)
 
-    def add_custom_color(self, fur, eye, name="", pattern="solid", p1=None, p2=None):
+    @staticmethod
+    def _look(pattern, p1, p2, stripes, white, eye2):
+        base, p1, p2, stripes, white = sprites.normalize_look(pattern, p1, p2, stripes, white)
+        L = lambda v: list(v) if v else None     # noqa: E731
+        return {"pattern": base, "p1": L(p1), "p2": L(p2), "stripes": L(stripes), "white": L(white),
+                "eye2": L(eye2)}
+
+    def add_custom_color(self, fur, eye, name="", pattern="solid", p1=None, p2=None,
+                         stripes=None, white=None, eye2=None):
         used = {c["id"] for c in self.custom_colors}
         k = 1
         while f"custom{k}" in used:
             k += 1
         cid = f"custom{k}"
         c = {"id": cid, "fur": list(fur), "eye": list(eye), "name": name.strip(),
-             "pattern": pattern, "p1": list(p1) if p1 else None, "p2": list(p2) if p2 else None}
+             **self._look(pattern, p1, p2, stripes, white, eye2)}
         self.custom_colors.append(c)
         sprites.CUSTOM[cid] = self._spec_of(c)
         self._save_custom_colors()
         return cid
 
-    def update_custom_color(self, cid, fur, eye, name="", pattern="solid", p1=None, p2=None):
+    def update_custom_color(self, cid, fur, eye, name="", pattern="solid", p1=None, p2=None,
+                            stripes=None, white=None, eye2=None):
         c = self.custom_color(cid)
         if not c:
-            return self.add_custom_color(fur, eye, name, pattern, p1, p2)
-        c.update(fur=list(fur), eye=list(eye), name=name.strip(), pattern=pattern,
-                 p1=list(p1) if p1 else None, p2=list(p2) if p2 else None)
+            return self.add_custom_color(fur, eye, name, pattern, p1, p2, stripes, white, eye2)
+        c.update(fur=list(fur), eye=list(eye), name=name.strip(),
+                 **self._look(pattern, p1, p2, stripes, white, eye2))
         sprites.CUSTOM[cid] = self._spec_of(c)
         self._save_custom_colors()
         for cat in self.cats:
