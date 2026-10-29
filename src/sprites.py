@@ -219,23 +219,96 @@ def _sp_key(color):
 
 
 # ---------------- 貓咪 ---------------- #
-def cat_frames(color, scale):
+_P_IDX = SEM.index("P")
+
+
+def _head_anchor(img, x0, y0, view):
+    """從原圖算出頭的位置：(兩耳中間的 x, 耳朵頂端 y)。view：back / right / front / sleep。"""
+    pts = [(x, y) for y in range(FRAME_H) for x in range(FRAME_W) if img.pixelIndex(x0 + x, y0 + y)]
+    if view == "front":
+        # 正面：頭上方會看到身體，用粉紅色的耳朵內側找耳朵
+        rows = [y for x, y in pts if img.pixelIndex(x0 + x, y0 + y) == _P_IDX]
+        top = min(rows) - 1
+        xs = [x for x, y in pts if y == top + 1 and img.pixelIndex(x0 + x, y0 + y) == _P_IDX]
+        return (min(xs) + max(xs)) / 2, top
+    top = min(y for _, y in pts)
+    xs = [x for x, y in pts if y == top]
+    return (min(xs) + max(xs)) / 2, top
+
+
+def _paint_grid(p, grid, x0, y0, flip=False):
+    import art
+    for gy, row in enumerate(grid):
+        row = row[::-1] if flip else row
+        for gx, ch in enumerate(row):
+            if ch != ".":
+                p.fillRect(int(x0 + gx), int(y0 + gy), 1, 1, QColor(*art.COLORS[ch]))
+
+
+def _dress(frame, anchor, view, hat, neck, face_left=False):
+    """把帽子、脖子的飾品畫到一格 32x48 的圖上（原尺寸，之後再放大）。"""
+    if not hat and not neck:
+        return frame
+    import art
+    from PySide6.QtGui import QPainter
+    img = frame.convertToFormat(QImage.Format_ARGB32)
+    p = QPainter(img)
+    cx, top = anchor
+    if neck and view != "sleep":
+        n = art.NECKS[neck]
+        if view in ("front", "back"):
+            g = n["front"]
+            w = max(len(r) for r in g)
+            y = top + (8 if view == "front" else 10)
+            _paint_grid(p, g, round(cx - w / 2 + 0.01), y)
+        else:
+            g = n["side"]
+            w = max(len(r) for r in g)
+            x = cx - 6 if not face_left else cx + 6 - w + 1
+            _paint_grid(p, g, round(x), top + 5, flip=face_left)
+    if hat:
+        g = art.HATS[hat]
+        w, h = max(len(r) for r in g), len(g)
+        dx = art.HAT_DX.get(hat, 0) * (-1 if face_left else 1)
+        y = top + 3 + art.HAT_SINK.get(hat, 0) - h - (1 if view == "front" else 0)
+        _paint_grid(p, g, round(cx + dx - w / 2 + 0.01), y, flip=face_left)
+    p.end()
+    return img
+
+
+def cat_frames(color, scale, hat=None, neck=None):
     """回傳 dict：walk[方向][格]、sleep[0=面右/1=面左][格]、expr[名稱][0=右/1=左]。"""
-    key = ("cat", _sp_key(color), scale)
+    key = ("cat", _sp_key(color), scale, hat, neck)
     if key not in _cache:
         sp = spec(color)
-        walk_img = _recolor(_image("base_walk.png"), sp, WALK_GROUPS)
-        walk = [[_scaled(walk_img.copy(f * FRAME_W, d * FRAME_H, FRAME_W, FRAME_H), scale)
-                 for f in range(FRAMES_PER_DIR)] for d in range(4)]
+        base_walk = _image("base_walk.png")
+        walk_img = _recolor(base_walk, sp, WALK_GROUPS)
+        views = {0: "back", 1: "right", 2: "front", 3: "right"}
+        walk = []
+        for d in range(4):
+            row = []
+            for f in range(FRAMES_PER_DIR):
+                x0, y0 = f * FRAME_W, d * FRAME_H
+                fr = walk_img.copy(x0, y0, FRAME_W, FRAME_H)
+                anc = _head_anchor(base_walk, x0, y0, views[d])
+                fr = _dress(fr, anc, views[d], hat, neck, face_left=(d == 3))
+                row.append(_scaled(fr, scale))
+            walk.append(row)
         mirror = QTransform().scale(-1, 1)
 
-        def both(img, n):
-            right = [img.copy(i * FRAME_W, 0, FRAME_W, FRAME_H) for i in range(n)]
+        def both(name, groups, n, view):
+            base = _image(name)
+            img = _recolor(base, sp, groups)
+            right = []
+            for i in range(n):
+                fr = img.copy(i * FRAME_W, 0, FRAME_W, FRAME_H)
+                fr = _dress(fr, _head_anchor(base, i * FRAME_W, 0, view), view, hat, neck)
+                right.append(fr)
             return [[_scaled(x, scale) for x in right],
                     [_scaled(x.transformed(mirror), scale) for x in right]]
 
-        sleep = both(_recolor(_image("base_sleep.png"), sp, SLEEP_GROUPS), 2)
-        ex = both(_recolor(_image("base_expr.png"), sp, EXPR_GROUPS), len(EXPRESSIONS))
+        sleep = both("base_sleep.png", SLEEP_GROUPS, 2, "sleep")
+        ex = both("base_expr.png", EXPR_GROUPS, len(EXPRESSIONS), "right")
         expr = {name: [ex[0][i], ex[1][i]] for i, name in enumerate(EXPRESSIONS)}
         _cache[key] = {"walk": walk, "sleep": sleep, "expr": expr}
     return _cache[key]

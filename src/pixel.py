@@ -293,7 +293,11 @@ def _grid_pixmap(grid, unit, colors=None, size=None):
 def icon_pixmap(name, unit=2, size=(12, 12)):
     key = ("icon", name, unit, size)
     if key not in _cache:
-        _cache[key] = _grid_pixmap(ICONS[name], unit, size=size)
+        if name not in ICONS:                   # 新增的圖示放在 art.py
+            import art
+            _cache[key] = _grid_pixmap(art.ICONS[name], unit, art.COLORS, size=size)
+        else:
+            _cache[key] = _grid_pixmap(ICONS[name], unit, size=size)
     return _cache[key]
 
 

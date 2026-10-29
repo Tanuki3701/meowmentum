@@ -9,20 +9,30 @@ from PySide6.QtCore import QObject, QPoint, QProcess, QRect, QSettings, Qt, QTim
 from PySide6.QtGui import QCursor, QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
+import art
 import i18n
 import macos
 import pixel
+import seasons
 import sprites
-from cat import COLORS, MODES, Cat
+from cat import COLORS, MODES, SIZES, Cat
 from glassmenu import PlainMenu
 from house import House
 from i18n import tr
 from macos import show_on_all_spaces
 from panels import Food, PaletteDialog, TimePicker, TodoPanel
+from progress import Progress
+from social import Social
+from toys import Gift, Spot, Toy
 
 PULSE_INTERVAL = 400        # 背景輕量檢查：閒置時間、滑鼠是否在貓咪身上
 PET_INTERVAL = 50           # 滑鼠在貓咪身上時，才開始密集偵測「摸摸」
 BATTERY_INTERVAL = 120_000  # 每 2 分鐘看一次電量
+SLOW_INTERVAL = 60_000      # 每分鐘：低耗電模式、深夜提醒、每天檢查更新
+FURNITURE_INTERVAL = 25_000 # 每 25 秒看看有沒有貓想去紙箱、貓跳台
+FULLSCREEN_INTERVAL = 2_000 # 全螢幕偵測（只有開啟「全螢幕時藏起來」才會跑）
+GIFT_AFTER = 20 * 60        # 離開超過 20 分鐘，回來會收到小禮物
+HOTKEY_TEXT = "⌃⌥M"
 
 
 def _subtract(intervals, cut):
@@ -46,6 +56,18 @@ class Controller(QObject):
         self.settings = QSettings("DesktopCat", "DesktopCat")
         s = self.settings
         self.tired = False
+        self.low_power = macos.low_power_mode()
+        self.all_hidden = False          # 目前所有貓咪是否藏起來（手動或全螢幕）
+        self._hidden_manual = False
+        self._hidden_fullscreen = False
+        self.toy = None
+        self.spots = {}
+        self._gifts = set()
+        self.progress = Progress(s)
+        self.seasonal = str(s.value("seasonal", "1")) == "1"
+        self.focus_home = str(s.value("focus_home", "0")) == "1"
+        self.autohide_fs = str(s.value("autohide_fullscreen", "1")) == "1"
+        self.update_check = str(s.value("update_check", "1")) == "1"
         i18n.set_lang(str(s.value("lang", "") or i18n.system_default()))
 
         # ---- 自訂毛色、貓屋 ----
@@ -60,6 +82,8 @@ class Controller(QObject):
             self._spawn(cid)
 
         self.todo = TodoPanel(self)
+        self.social = Social(self)
+        self._shop = self._stats = self._namer = self._inside = None
 
         # ---- 番茄鐘 ----
         self.pomo_phase = None
@@ -98,6 +122,13 @@ class Controller(QObject):
         self._win_cache = (0.0, [])
         self._foods = set()
 
+        # ---- 快捷鍵、更新（選單列選單會用到）----
+        self.hotkey_ok = macos.register_hotkey(lambda: QTimer.singleShot(0, self.toggle_hidden))
+        from updater import Updater
+        self.updater = Updater(s)
+        self.updater.found.connect(self._update_found)
+        self._update_said = False
+
         # ---- 選單列圖示（一次控制全部貓咪）----
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -112,6 +143,21 @@ class Controller(QObject):
             self.tray.show()
         if str(s.value("house_visible", "0")) == "1":
             self.house.show_house()
+
+        # ---- 家具、深夜、低耗電、全螢幕、快捷鍵、更新 ----
+        for item in sorted(self.progress.placed):
+            if self.progress.has(item):
+                self.spots[item] = Spot(self, item)
+        self.furniture_timer = self._timer(self._furniture_tick, FURNITURE_INTERVAL)
+        self.furniture_timer.start()
+        self._last_yawn = 0.0
+        self.slow_timer = self._timer(self._slow_tick, SLOW_INTERVAL)
+        self.slow_timer.start()
+        self.fs_timer = self._timer(self._check_fullscreen, FULLSCREEN_INTERVAL)
+        if self.autohide_fs:
+            self.fs_timer.start()
+        if self.update_check:
+            QTimer.singleShot(8000, self.updater.check)
 
     def _timer(self, slot, interval=None):
         t = QTimer(self)
@@ -156,6 +202,8 @@ class Controller(QObject):
         if len(self.cats) <= 1:
             return
         self.cats.remove(cat)
+        if cat.toy is not None:
+            cat.toy = None
         for key in self.settings.allKeys():
             if key.startswith(cat.prefix):
                 self.settings.remove(key)
@@ -184,6 +232,28 @@ class Controller(QObject):
         feed.addSeparator()
         feed.item("dot", tr("flavor_random"), lambda: handler("random"))
 
+    def _toy_menu(self, menu):
+        toy = menu.sub(QIcon(art.icon_pm("toy")), tr("toys"))
+        if self.toy is not None:
+            toy.item("close", tr("toy_away"), self.stop_toy)
+            toy.addSeparator()
+        toy.item(QIcon(art.icon_pm("toy")), tr("toy_wand"), lambda: self.start_toy("wand"))
+        toy.item(QIcon(art.pix(art.YARN[0], 1.5)), tr("toy_yarn"), lambda: self.start_toy("yarn"))
+
+    def _furniture_menu(self, menu):
+        fm = menu.sub(QIcon(art.icon_pm("box")), tr("furniture"))
+        any_owned = False
+        for item in ("box", "tree"):
+            if self.progress.has(item):
+                any_owned = True
+                fm.item("check" if item in self.spots else None, tr("item_" + item),
+                        lambda i=item: self.place_item(i, i not in self.spots))
+        if not any_owned:
+            act = fm.addAction(tr("furniture_none"))
+            act.setEnabled(False)
+        fm.addSeparator()
+        fm.item(QIcon(art.icon_pm("shop")), tr("shop"), lambda: self.open_shop(self.main_cat))
+
     def _settings_menu(self, menu):
         settings = menu.sub("gear", tr("settings"))
         settings.sub(pixel.blank_icon(), tr("remind")).choices(
@@ -194,6 +264,19 @@ class Controller(QObject):
              10: tr("n_min", m=10)}, self.sleep_min, self.set_sleep_min)
         settings.item("check" if self.battery_alert else None, tr("battery_alert"),
                       lambda: self.set_battery_alert(not self.battery_alert))
+        settings.addSeparator()
+        settings.item("check" if self.focus_home else None, tr("focus_home"),
+                      lambda: self._toggle("focus_home"))
+        settings.item("check" if self.seasonal else None, tr("seasonal"),
+                      lambda: self._toggle("seasonal"))
+        settings.item("check" if self.autohide_fs else None, tr("autohide_fs"),
+                      lambda: self._toggle("autohide_fs"))
+        settings.addSeparator()
+        settings.item("check" if macos.login_item_enabled() else None, tr("login_item"),
+                      lambda: macos.set_login_item(not macos.login_item_enabled()))
+        settings.item("check" if self.update_check else None, tr("update_check"),
+                      lambda: self._toggle("update_check"))
+        settings.item(QIcon(art.icon_pm("update")), tr("update_now"), self.check_update_now)
         menu.sub("globe", tr("language")).choices(i18n.LANGS, i18n.lang(), self.set_language)
 
     def build_menu(self, cat, menu):
@@ -201,6 +284,7 @@ class Controller(QObject):
         self._pomo_menu(menu, cat)
         menu.item("note", tr("todo"), lambda: self.toggle_todo(cat))
         self._feed_menu(menu, tr("feed"), lambda f: self.feed(cat, f))
+        self._toy_menu(menu)
         menu.addSeparator()
         cat.add_own_menus(menu)
         menu.item("home", tr("go_home"), lambda: self.send_home(cat))
@@ -216,18 +300,35 @@ class Controller(QObject):
         """選單列（螢幕最上方）的選單：一次控制全部貓咪。"""
         m = self.tray_menu
         m.clear()
+        if self.updater.latest:
+            m.item(QIcon(art.icon_pm("update")), tr("update_get", v=self.updater.latest[0]), self.open_update)
+            m.addSeparator()
         self._pomo_menu(m, self.main_cat)
         m.item("note", tr("todo"), lambda: self.toggle_todo(self.main_cat))
+        m.item(QIcon(art.icon_pm("chart")), tr("stats"), lambda: self.open_stats(self.main_cat))
+        m.item(QIcon(art.icon_pm("shop")), tr("shop_with", n=self.progress.coins),
+               lambda: self.open_shop(self.main_cat))
+        m.addSeparator()
         self._feed_menu(m, tr("feed_all"), self.feed_all)
+        self._toy_menu(m)
         m.addSeparator()
         modes = {c.mode for c in self.cats}
         m.sub("paw", tr("all_mode")).choices(
             {k: tr("mode_" + k) for k in MODES}, modes.pop() if len(modes) == 1 else None,
             self.set_all_mode)
+        scales = {c.scale for c in self.cats}
+        m.sub("size", tr("all_size")).choices(
+            {z: tr(f"size_{z}") for z in SIZES}, scales.pop() if len(scales) == 1 else None,
+            self.set_all_size)
         hm = m.sub("home", tr("house_menu"))
         self.house.fill_menu(hm)
         hm.addSeparator()
         hm.item("check" if self.house.isVisible() else None, tr("house_show"), self.toggle_house)
+        self._furniture_menu(m)
+        hide_text = tr("show_all") if self._hidden_manual else tr("hide_all")
+        if self.hotkey_ok:
+            hide_text += f"    {HOTKEY_TEXT}"
+        m.item(QIcon(art.icon_pm("hide")), hide_text, self.toggle_hidden)
         m.addSeparator()
         m.item(pixel.cat_head_icon("orange", plus=True), tr("add_cat"), lambda: self.add_cat(self.main_cat))
         m.item("palette", tr("palette"), lambda: self.open_palette(self.main_cat))
@@ -239,6 +340,186 @@ class Controller(QObject):
     def set_all_mode(self, mode):
         for c in self.cats:
             c.set_mode(mode)
+
+    def set_all_size(self, scale):
+        for c in self.cats:
+            c.set_scale(scale)
+
+    def _toggle(self, name):
+        keys = {"focus_home": "focus_home", "seasonal": "seasonal", "autohide_fs": "autohide_fullscreen",
+                "update_check": "update_check"}
+        on = not getattr(self, name)
+        setattr(self, name, on)
+        self.settings.setValue(keys[name], "1" if on else "0")
+        if name == "seasonal":
+            self.house.update()
+            for c in self.cats:
+                c._build_frames()
+        elif name == "autohide_fs":
+            if on:
+                self.fs_timer.start()
+            else:
+                self.fs_timer.stop()
+                self._hidden_fullscreen = False
+                self._apply_hidden()
+        elif name == "update_check" and on:
+            self.updater.check()
+
+    # ---------------- 視窗：商店、紀錄、名字、貓屋裡面 ---------------- #
+    def open_shop(self, cat):
+        from shop import ShopPanel
+        if self._shop is None:
+            self._shop = ShopPanel(self)
+        self._shop.open_for(cat)
+
+    def open_stats(self, cat):
+        from shop import StatsPanel
+        if self._stats is None:
+            self._stats = StatsPanel(self)
+        self._stats.open_near(cat)
+
+    def rename(self, cat):
+        from shop import NamePrompt
+        if self._namer is None:
+            self._namer = NamePrompt(self)
+        self._namer.open_for(cat)
+
+    def open_interior(self):
+        import interior
+        if self._inside is None:
+            self._inside = interior.make_panel(self)
+        self.house.show_house()
+        self._inside.open_near(self.house)
+
+    # ---------------- 藏起所有貓咪 ---------------- #
+    def toggle_hidden(self):
+        self._hidden_manual = not self._hidden_manual
+        self._apply_hidden()
+
+    def _check_fullscreen(self):
+        screens = [(g.x(), g.y(), g.width(), g.height())
+                   for g in (sc.geometry() for sc in QGuiApplication.screens())]
+        fs = macos.fullscreen_active(screens)
+        if fs != self._hidden_fullscreen:
+            self._hidden_fullscreen = fs
+            self._apply_hidden()
+
+    def _apply_hidden(self):
+        hidden = self._hidden_manual or self._hidden_fullscreen
+        if hidden == self.all_hidden:
+            return
+        self.all_hidden = hidden
+        if hidden:
+            self.stop_toy()
+        for c in self.cats:
+            if c.activity not in ("home", "box"):
+                c.setVisible(not hidden)
+            c.overlay._refresh()
+        for w in list(self.spots.values()) + list(self._gifts):
+            w.setVisible(not hidden)
+        if self.settings.value("house_visible", "0") == "1" or self.house.residents:
+            if hidden:
+                self.house.hide()
+            else:
+                self.house.show_house()
+        for panel in (self.todo, self.picker, self.palette, self._shop, self._stats, self._namer):
+            if panel is not None and hidden:
+                panel.hide()
+
+    # ---------------- 玩具 ---------------- #
+    def start_toy(self, kind):
+        self.stop_toy()
+        self.toy = Toy(kind, self._toy_done)
+        for i, c in enumerate(self.cats):
+            QTimer.singleShot(i * 200, lambda c=c: self.toy is not None and c in self.cats
+                              and c.play_with(self.toy))
+
+    def stop_toy(self):
+        if self.toy is not None:
+            self.toy.stop()
+
+    def _toy_done(self, toy):
+        if self.toy is toy:
+            self.toy = None
+        for c in self.cats:
+            if c.toy is toy:
+                c.stop_play()
+
+    # ---------------- 家具 ---------------- #
+    def place_item(self, item, on):
+        if on and item not in self.spots and self.progress.has(item):
+            self.spots[item] = Spot(self, item)
+            if self.all_hidden:
+                self.spots[item].hide()
+        elif not on and item in self.spots:
+            self.spots.pop(item).dispose()
+        self.progress.set_placed(item, on)
+
+    def _free_cats(self):
+        return [c for c in self.cats if c.activity is None and c.mode in ("idle", "random")
+                and c.isVisible() and c.spot is None]
+
+    def invite_to(self, spot):
+        if spot.occupant is not None:
+            return
+        free = self._free_cats()
+        if not free:
+            return
+        cat = min(free, key=lambda c: abs(c.center_x() - (spot.x() + spot.width() / 2)))
+        cat.overlay.say(tr("say_coming"), 1500)
+        cat.visit(spot)
+
+    def _furniture_tick(self):
+        if self.all_hidden or self.sleeping or self.toy is not None:
+            return
+        for spot in self.spots.values():
+            if spot.occupant is None and random.random() < 0.3:
+                free = [c for c in self._free_cats()
+                        if c.screen_rect().contains(spot.geometry().center())]
+                if free:
+                    random.choice(free).visit(spot)
+                    return
+
+    # ---------------- 小禮物、深夜、低耗電、更新 ---------------- #
+    def collect_gift(self, gift):
+        self._gifts.discard(gift)
+        self.progress.add_coins(2)
+        cat = self.main_cat
+        cat.overlay.say(tr("say_gift_thanks", n=2), 2500)
+        cat.overlay.burst("heart", 3)
+
+    def _slow_tick(self):
+        lp = macos.low_power_mode()
+        if lp != self.low_power:
+            self.low_power = lp
+            for c in self.cats:
+                c.refresh_speed()
+        now = time.monotonic()
+        if (seasons.is_late_night() and not self.sleeping and not self.all_hidden
+                and now - self._last_yawn > 3600):
+            self._last_yawn = now
+            cat = self.main_cat
+            if cat.activity in (None, "hold") and cat.isVisible():
+                cat.overlay.say(random.choice(tr("say_late")), 5000)
+                cat.overlay.zzz()
+        if self.update_check:
+            self.updater.check()
+
+    def _update_found(self, version, _url):
+        if not self._update_said:
+            self._update_said = True
+            self.main_cat.overlay.say(tr("say_update", v=version), 6000)
+
+    def open_update(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        if self.updater.latest:
+            QDesktopServices.openUrl(QUrl(self.updater.latest[1]))
+
+    def check_update_now(self):
+        self._update_said = False
+        self.updater.check(force=True)
+        self.main_cat.overlay.say(tr("say_checking"), 2000)
 
     def send_home(self, cat):
         cat.go_home(self.house)
@@ -357,6 +638,9 @@ class Controller(QObject):
         self.todo.retranslate()
         self.picker.hide()
         self.palette.hide()
+        for panel in (self._shop, self._stats, self._namer, self._inside):
+            if panel is not None:
+                panel.hide()
 
     # ---------------- 番茄鐘 ---------------- #
     def _pomo_left(self):
@@ -377,6 +661,11 @@ class Controller(QObject):
     def start_focus(self, minutes):
         self._start_phase("focus", minutes)
         self.main_cat.overlay.say(tr("say_focus", m=minutes), 3000)
+        if self.focus_home:
+            # 專注時其他貓咪回家睡覺，留下第一隻貓安靜地陪你、顯示倒數
+            for i, c in enumerate(self.cats[1:]):
+                QTimer.singleShot(400 + i * 250, lambda c=c: c in self.cats and c.go_home(self.house))
+            QTimer.singleShot(3200, lambda: self.pomo_phase == "focus" and self.main_cat.sleep())
 
     def start_break(self, minutes):
         self._start_phase("break", minutes)
@@ -426,13 +715,20 @@ class Controller(QObject):
     def _pomo_finish(self):
         cat = self.main_cat
         if self.pomo_phase == "focus":
+            minutes = int(round(self.pomo_total / 60))
+            coins = self.progress.reward_for(minutes)
+            self.progress.record_focus(minutes)
+            self.progress.add_coins(coins)
+            if self.focus_home and self.house.residents:
+                QTimer.singleShot(1500, self.come_out)
+            cat.wake(quiet=True)
             self.start_break(self.break_min)
             r = cat.screen_rect()
             x = r.center().x() - cat.width() / 2
 
             def arrived():
                 cat.spin(2)
-                cat.overlay.say(tr("say_focus_done", m=self.break_min), 6000)
+                cat.overlay.say(tr("say_focus_done", m=self.break_min) + "\n" + tr("say_reward", n=coins), 6000)
                 cat.overlay.burst("heart", 4)
 
             cat.go_to(x, cat.ground_y(), then=arrived)
@@ -482,6 +778,12 @@ class Controller(QObject):
         self.sleeping = False
         for c in self.cats:
             c.wake()
+        away = time.monotonic() - getattr(self, "_sleep_started", time.monotonic())
+        cat = self.main_cat
+        if away >= GIFT_AFTER and not self.all_hidden and cat.isVisible() and not self._gifts:
+            gift = Gift(self, cat)
+            self._gifts.add(gift)
+            QTimer.singleShot(2200, lambda: cat.overlay.say(tr("say_gift"), 4000))
 
     def _pulse(self):
         now = time.monotonic()
@@ -496,6 +798,9 @@ class Controller(QObject):
         if self.sleep_min > 0:
             if not self.sleeping and idle >= self.sleep_min * 60:
                 self.sleeping = True
+                self._sleep_started = now - idle
+                self.stop_toy()
+                self.social.cuddle()
                 for c in self.cats:
                     c.sleep()
             elif self.sleeping and idle < 1.5:
@@ -504,6 +809,15 @@ class Controller(QObject):
                 for c in self.cats:  # 剛才在忙（跳躍、吃東西）的貓，忙完再去睡
                     if c.activity != "sleep":
                         c.sleep()
+
+        hovered = None
+        if not self.all_hidden:
+            for c in self.cats:
+                if c.isVisible() and c.geometry().contains(pos):
+                    hovered = c
+                    break
+        for c in self.cats:
+            c.overlay.set_tag(c.display_name() if c is hovered else None)
 
         if not self.pet_timer.isActive() and QGuiApplication.mouseButtons() == Qt.NoButton:
             for c in self.cats:

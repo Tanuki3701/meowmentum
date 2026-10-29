@@ -5,7 +5,7 @@
 import random
 
 from PySide6.QtCore import QRect, Qt, QTimer
-from PySide6.QtGui import QFontMetrics, QPainter
+from PySide6.QtGui import QColor, QFontMetrics, QPainter
 from PySide6.QtWidgets import QWidget
 
 import pixel
@@ -33,6 +33,7 @@ class Overlay(QWidget):
         self.setFixedSize(self.W, self.H)
 
         self.text = None
+        self.tag = None            # 滑鼠移到貓咪身上時顯示的名牌
         self.label = None          # (pixmap, 文字)，例如番茄 + 倒數
         self.effects = []          # [kind, x, y, 剩餘步數]
         self._spaces_done = False
@@ -52,6 +53,11 @@ class Overlay(QWidget):
         self.text = text
         self.text_timer.start(ms)
         self._refresh()
+
+    def set_tag(self, tag):
+        if tag != self.tag:
+            self.tag = tag
+            self._refresh()
 
     def set_label(self, label):
         self.label = label
@@ -98,7 +104,9 @@ class Overlay(QWidget):
         self._refresh()
 
     def _refresh(self):
-        need = bool(self.text or self.label or self.effects)
+        need = bool(self.text or self.label or self.effects or self.tag)
+        if self.cat.ctrl.all_hidden:
+            need = False
         if need and not self.isVisible():
             self.show()
             if not self._spaces_done:
@@ -120,6 +128,8 @@ class Overlay(QWidget):
         if self.text:
             r = self.fm.boundingRect(QRect(0, 0, MAX_TEXT_W, 400), Qt.TextWordWrap, self.text)
             rows.append(("text", r.width(), r.height()))
+        elif self.tag and not self.label:
+            rows.append(("tag", self.fm.horizontalAdvance(self.tag), self.fm.height()))
         if not rows:
             return None, rows
         w = max(r[1] for r in rows) + PAD * 2 + U * 2
@@ -133,6 +143,15 @@ class Overlay(QWidget):
         p = QPainter(self)
         box, rows = self._layout()
         lift = 0
+        is_tag = box and rows[0][0] == "tag"
+        if is_tag:                                   # 名牌：薄荷綠小牌子，沒有尾巴
+            box = QRect(box.left() + 4, box.top() + 10, box.width() - 8, box.height() - 6)
+            pixel.draw_box(p, box, U, fill=QColor(196, 236, 226), light=QColor(232, 250, 244))
+            p.setFont(self.font)
+            p.setPen(pixel.INK)
+            p.drawText(box, Qt.AlignCenter, self.tag)
+            box = None
+            lift = 26
         if box:
             pixel.draw_box(p, box, U)
             pixel.draw_tail(p, self.W // 2 // U * U, box.bottom() + 1 - U, U)

@@ -11,6 +11,8 @@ from PySide6.QtCore import QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
+import art
+import seasons
 import sprites
 from i18n import tr
 from macos import show_on_all_spaces
@@ -22,7 +24,13 @@ GROUND = sprites.HOUSE_GROUND
 CHIMNEY = sprites.HOUSE_CHIMNEY            # 煙囪口中心 (x, y)
 PETAL_COLORS = [QColor(255, 132, 176), QColor(255, 190, 214), QColor(255, 255, 255),
                 QColor(255, 214, 84), QColor(182, 146, 244)]
+SPRING_COLORS = [QColor(255, 182, 206), QColor(255, 206, 222), QColor(255, 236, 242)]
 FRAME_MS = 90
+
+
+def _eye_icon():
+    from PySide6.QtGui import QIcon
+    return QIcon(art.icon_pm("eye"))
 
 
 class House(QWidget):
@@ -171,11 +179,13 @@ class House(QWidget):
 
     def _gust(self):
         bushes = [(4, 18), (AW - 22, AW - 4)]
+        spring = self.ctrl.seasonal and "spring" in seasons.decorations()
         for _ in range(random.randint(2, 4)):
             x0, x1 = random.choice(bushes)
             self.petals.append([random.uniform(x0, x1), GROUND - random.uniform(6, 9),
                                 random.uniform(-0.35, 0.35), random.uniform(-0.45, -0.2),
-                                random.uniform(0, 6.28), random.choice(PETAL_COLORS),
+                                random.uniform(0, 6.28),
+                                random.choice(SPRING_COLORS if spring else PETAL_COLORS),
                                 random.randint(50, 80)])
         self.anim.start()
         self._schedule_gust()
@@ -232,6 +242,11 @@ class House(QWidget):
             x, y, w, h = sprites.HOUSE_SLOTS[st["slot"]]
             p.drawPixmap(self._art_rect(x, y, w, h), opened,
                          QRect(int(x * u * dpr), int(y * u * dpr), int(w * u * dpr), int(h * u * dpr)))
+        used = {st["slot"] for st in self.state.values()}
+        if seasons.is_night():
+            self._paint_night(p, used)
+        if self.ctrl.seasonal:
+            self._paint_decor(p, used)
         for cat, st in self.state.items():
             x, y, w, h = sprites.HOUSE_SLOTS[st["slot"]]
             hole = self._art_rect(x, y, w, h)
@@ -256,6 +271,51 @@ class House(QWidget):
             flip = math.sin(ph)                          # 翻轉：2x2 → 2x1 → 1x1
             w, h = (2, 2) if flip > 0.35 else ((2, 1) if flip > -0.4 else (1, 1))
             p.fillRect(self._art_rect(int(round(x)), int(round(y)), w, h), c)
+
+    def _paint_night(self, p, used):
+        """晚上：關著的窗戶亮起暖暖的燈。"""
+        cream = QColor(255, 251, 242)
+        for key in ("left", "right", "attic"):
+            if key in used:
+                continue
+            x, y, w, h = sprites.HOUSE_SLOTS[key]
+            p.fillRect(self._art_rect(x, y, w, h), QColor(255, 222, 130))
+            p.fillRect(self._art_rect(x, y + h // 2, w, h - h // 2), QColor(255, 190, 100))
+            p.fillRect(self._art_rect(x + 1, y + 1, 2, 1), QColor(255, 246, 200))
+            p.fillRect(self._art_rect(x + w // 2, y, 1, h), cream)
+            if key != "attic":
+                p.fillRect(self._art_rect(x, y + h // 2, w, 1), cream)
+
+    def _paint_decor(self, p, used):
+        """節慶裝飾：萬聖節南瓜、聖誕花圈和燈泡、積雪、春聯和燈籠。"""
+        deco = seasons.decorations()
+        u = self.U
+        white = QColor(255, 255, 255)
+        if "snow" in deco:
+            for y in range(3, 25):
+                half = int((y - 3) * 26 / 22) + 1
+                x0, x1 = 28 - half, 27 + half
+                p.fillRect(self._art_rect(x0 + 1, y, 1, 1), white)
+                p.fillRect(self._art_rect(x1 - 1, y, 1, 1), white)
+                if y < 7:
+                    p.fillRect(self._art_rect(x0 + 1, y, x1 - x0 - 1, 1), white)
+            p.fillRect(self._art_rect(37, 1, 9, 2), white)
+            for x in (3, 7, 12, 17, 38, 43, 48, 52):
+                p.fillRect(self._art_rect(x, GROUND - 8, 2, 1), white)
+        if "xmas" in deco:
+            colors = [QColor(232, 72, 72), QColor(255, 214, 70), QColor(90, 190, 90), QColor(90, 150, 230)]
+            for i, x in enumerate(range(5, AW - 4, 4)):
+                p.fillRect(self._art_rect(x, 26, 1, 1), QColor(58, 55, 55))
+                p.fillRect(self._art_rect(x, 27, 1, 1), colors[i % 4])
+            if "door" not in used:
+                p.drawPixmap(self._art_rect(25, 39, 7, 8).topLeft(), art.pix(art.WREATH, u))
+        if "halloween" in deco:
+            p.drawPixmap(self._art_rect(13, GROUND - 8, 8, 8).topLeft(), art.pix(art.PUMPKIN, u))
+        if "lny" in deco:
+            p.drawPixmap(self._art_rect(17, 33, 2, 10).topLeft(), art.pix(art.COUPLET, u))
+            p.drawPixmap(self._art_rect(37, 33, 2, 10).topLeft(), art.pix(art.COUPLET, u))
+            p.drawPixmap(self._art_rect(5, 26, 5, 8).topLeft(), art.pix(art.LANTERN, u))
+            p.drawPixmap(self._art_rect(46, 26, 5, 8).topLeft(), art.pix(art.LANTERN, u))
 
     # ---------------- 滑鼠 ---------------- #
     def mousePressEvent(self, e):
@@ -283,7 +343,12 @@ class House(QWidget):
         if dragging:
             self.ctrl.settings.setValue("house_pos", self.pos())
 
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.ctrl.open_interior()
+
     def fill_menu(self, menu):
+        menu.item(_eye_icon(), tr("look_inside"), self.ctrl.open_interior)
         if self.residents:
             menu.item("paw", tr("come_out"), self.ctrl.come_out)
         if len(self.residents) < len(self.ctrl.cats):

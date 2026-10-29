@@ -13,6 +13,7 @@ from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
+import i18n
 import pixel
 import sprites
 from glassmenu import GlassMenu
@@ -23,6 +24,8 @@ STAND_FRAME = 1
 UP, RIGHT, DOWN, LEFT = 0, 1, 2, 3
 
 COLORS = ["orange", "black", "white", "brown"]
+DEFAULT_NAMES = {"en": ["Mochi", "Tofu", "Miso", "Latte", "Nori", "Pudding", "Sesame", "Biscuit"],
+                 "zh": ["麻糬", "豆腐", "味噌", "拿鐵", "海苔", "布丁", "芝麻", "餅乾"]}
 MODES = ["idle", "random", "follow", "windows", "dock", "sleep"]
 DIRECTIONS = {DOWN: "dir_down", LEFT: "dir_left", RIGHT: "dir_right", UP: "dir_up"}
 SIZES = [2, 3, 4]
@@ -59,6 +62,14 @@ class Cat(QWidget):
         self.scale = int(self._pref("scale", 3))
         if self.scale not in SIZES:
             self.scale = 3
+        self.name = str(self._pref("name", "") or "")
+        self.hat = str(self._pref("hat", "") or "") or None
+        self.neck = str(self._pref("neck", "") or "") or None
+        self._clicks = []
+        self._crossing = False
+        self._waypoints = []
+        self.toy = None           # 正在追的玩具
+        self.spot = None          # 待在哪個家具裡／上（紙箱、貓跳台）
 
         self.direction = self.idle_direction
         self.frame = STAND_FRAME
@@ -86,6 +97,8 @@ class Cat(QWidget):
         self._expr_side = 0
         self.expr_timer = self._timer(self._clear_expression)
         self.expr_timer.setSingleShot(True)
+        self.spot_timer = self._timer(self.leave_spot)     # 在紙箱裡／貓跳台上待多久
+        self.spot_timer.setSingleShot(True)
         self.hold_timer = self._timer(self._end_hold)   # 「愣住一下」之後才恢復原本的模式
         self.hold_timer.setSingleShot(True)
         self._hold_then = None
@@ -113,7 +126,9 @@ class Cat(QWidget):
 
     # ---------------- 影格與繪圖 ---------------- #
     def _build_frames(self):
-        self.frames = sprites.cat_frames(self.color, self.scale)
+        hat = self.hat if self.hat and self.ctrl.progress.has(self.hat) else None
+        neck = self.neck if self.neck and self.ctrl.progress.has(self.neck) else None
+        self.frames = sprites.cat_frames(self.color, self.scale, hat, neck)
         self.setFixedSize(sprites.FRAME_W * self.scale, sprites.FRAME_H * self.scale)
         self.update()
 
@@ -178,12 +193,19 @@ class Cat(QWidget):
     def _speed(self, base):
         return base * (0.5 if self.ctrl.tired else 1.0)
 
+    def _anim_ms(self):
+        return ANIM_INTERVAL * (2 if (self.ctrl.tired or self.ctrl.low_power) else 1)
+
+    def _move_ms(self):
+        """低耗電模式：移動改成約 15fps（走的距離一樣，只是畫面更新少一半）。"""
+        return MOVE_INTERVAL * 2 if self.ctrl.low_power else MOVE_INTERVAL
+
     # ---------------- 走路狀態 ---------------- #
     def _set_walking(self, walking, interval=MOVE_INTERVAL):
         if walking:
-            self.move_timer.start(interval)
+            self.move_timer.start(self._move_ms() if interval == MOVE_INTERVAL else interval)
             if not self.walking:
-                self.anim_timer.start(ANIM_INTERVAL * (2 if self.ctrl.tired else 1))
+                self.anim_timer.start(self._anim_ms())
         else:
             self.anim_timer.stop()
             if self.mode == "follow" or (self.mode == "windows" and self.perch):
@@ -202,9 +224,17 @@ class Cat(QWidget):
 
     def refresh_speed(self):
         if self.walking:
-            self.anim_timer.start(ANIM_INTERVAL * (2 if self.ctrl.tired else 1))
+            self.anim_timer.start(self._anim_ms())
+            if self.move_timer.interval() in (MOVE_INTERVAL, MOVE_INTERVAL * 2):
+                self.move_timer.start(self._move_ms())
 
     def _apply_mode(self):
+        if self.spot is not None and self.spot.kind == "tree" and self.spot_timer.isActive():
+            self._stop_all()                       # 還在貓跳台上：醒來後繼續坐著
+            self.activity = "tree"
+            self.direction = DOWN
+            self.update()
+            return
         self._stop_all()
         self.activity = None
         self.fx, self.fy = float(self.x()), float(self.y())
@@ -249,6 +279,23 @@ class Cat(QWidget):
 
     def _start_wandering(self):
         r = self.screen_rect()
+        screens = [sc.availableGeometry() for sc in QGuiApplication.screens()]
+        others = [g for g in screens if g != r]
+        if others and random.random() < 0.2:
+            # 多螢幕：偶爾散步到另一個螢幕（先走到兩個螢幕相接的邊，再走過去）
+            g = random.choice(others)
+            tx = random.randint(g.left(), max(g.left(), g.right() - self.width()))
+            ty = random.randint(g.top(), max(g.top(), g.bottom() - self.height()))
+            lo = max(r.top(), g.top())
+            hi = min(r.bottom(), g.bottom()) - self.height()
+            if hi > lo:
+                ey = max(lo, min(hi, self.y()))
+                ex = r.right() - self.width() if g.left() >= r.right() else r.left()
+                self._waypoints = [(tx, ty)]
+                self.target = (ex, ey)
+                self._set_walking(True)
+                return
+        self._waypoints = []
         self.target = (random.randint(r.left(), max(r.left(), r.right() - self.width())),
                        random.randint(r.top(), max(r.top(), r.bottom() - self.height())))
         self._set_walking(True)
@@ -266,6 +313,8 @@ class Cat(QWidget):
             self._fall_step()
         elif a == "zoom":
             self._zoom_step()
+        elif a == "play":
+            self._play_step()
         elif a is None:
             if self.mode in ("random", "dock"):
                 self._wander_step()
@@ -275,18 +324,26 @@ class Cat(QWidget):
                 self._windows_step()
 
     def _step_towards(self, tx, ty, speed):
+        if self.ctrl.low_power and self.move_timer.interval() == MOVE_INTERVAL * 2:
+            speed *= 2
         dx, dy = tx - self.fx, ty - self.fy
         if abs(dx) <= speed and abs(dy) <= speed:
-            self._move_to(tx, ty, clamp=self.mode != "windows")
+            self._move_to(tx, ty, clamp=self.mode != "windows" and not self._crossing)
+            self._crossing = False
             return True
         self._face(dx, dy)
         sx = max(-speed, min(speed, dx))
         sy = max(-speed, min(speed, dy))
-        self._move_to(self.fx + sx, self.fy + sy, clamp=self.mode != "windows")
+        self._move_to(self.fx + sx, self.fy + sy, clamp=self.mode != "windows" and not self._crossing)
         return False
 
     def _wander_step(self):
         if self._step_towards(*self.target, self._speed(WANDER_SPEED)):
+            if self.mode == "random" and getattr(self, "_waypoints", None):
+                # 跨到另一個螢幕：暫時不夾在原本的螢幕裡
+                self.target = self._waypoints.pop(0)
+                self._crossing = True
+                return
             self._set_walking(False)
             self.rest_timer.start(random.randint(*REST_MS))
 
@@ -454,6 +511,7 @@ class Cat(QWidget):
     def go_to(self, x, y, then=None, speed=7):
         if self.activity == "home":
             self._exit_home()
+        self._drop_spot()
         if self.activity == "sleep":
             self.wake(quiet=True, force=True)
         self._stop_all()
@@ -485,7 +543,7 @@ class Cat(QWidget):
         self.act_timer.start(260)
 
     def spin(self, rounds=2):
-        if self.activity == "home":
+        if self.activity in ("home", "box", "tree"):
             self.overlay.burst("heart", 3)
             return
         if self.activity == "sleep":
@@ -500,6 +558,8 @@ class Cat(QWidget):
         self.act_timer.start(110)
 
     def sleep(self):
+        if self.activity == "tree":
+            self.activity = None          # 在貓跳台上直接睡（spot 保留，醒來繼續坐著）
         if self.activity is not None:
             return
         self._stop_all()
@@ -702,6 +762,8 @@ class Cat(QWidget):
                 return
             if self.activity == "sleep":
                 self.wake(quiet=True, force=True)
+            self._drop_spot()
+            self.toy = None
             if self.activity == "eat" and getattr(self, "_food", None):
                 self._food.close()
                 self._food = None
@@ -734,6 +796,11 @@ class Cat(QWidget):
                 self.overlay.burst("heart", 2)
         else:
             self.overlay.burst("heart", 1)   # 左鍵只是摸摸，功能一律從右鍵選單
+            now = time.monotonic()
+            self._clicks = [t for t in self._clicks if now - t < 3] + [now]
+            if len(self._clicks) >= 5:
+                self._clicks = []
+                self.annoyed()
 
     def contextMenuEvent(self, e):
         menu = GlassMenu()
@@ -751,10 +818,183 @@ class Cat(QWidget):
                    checked_icons={c: pixel.cat_head_icon(c, check=True) for c in colors})
         cm.addSeparator()
         cm.item("palette", tr("palette"), lambda: self.ctrl.open_palette(self))
+        look = menu.sub("crown", tr("accessories"))
+        hats = {None: tr("acc_none")}
+        hats.update({h: tr("item_" + h) for h in self.ctrl.progress.owned_of("hat")})
+        look.sub("crown", tr("acc_hat")).choices(hats, self.hat, self.set_hat)
+        necks = {None: tr("acc_none")}
+        necks.update({n: tr("item_" + n) for n in self.ctrl.progress.owned_of("neck")})
+        look.sub("dot", tr("acc_neck")).choices(necks, self.neck, self.set_neck)
+        look.addSeparator()
+        look.item("shop", tr("shop"), lambda: self.ctrl.open_shop(self))
+        menu.item("name", tr("name_cat", n=self.display_name()), lambda: self.ctrl.rename(self))
         menu.sub("facing", tr("facing")).choices(
             {d: tr(k) for d, k in DIRECTIONS.items()}, self.idle_direction, self.set_idle_direction)
         menu.sub("size", tr("size")).choices(
             {z: tr(f"size_{z}") for z in SIZES}, self.scale, self.set_scale)
+
+    # ---------------- 名字、飾品、生氣 ---------------- #
+    def display_name(self):
+        if self.name:
+            return self.name
+        names = DEFAULT_NAMES[i18n.lang()]
+        return names[self.cid % len(names)]
+
+    def set_name(self, name):
+        self.name = name.strip()[:16]
+        self._save("name", self.name)
+
+    def set_hat(self, hat):
+        self.hat = hat
+        self._save("hat", hat or "")
+        self._build_frames()
+
+    def set_neck(self, neck):
+        self.neck = neck
+        self._save("neck", neck or "")
+        self._build_frames()
+
+    def annoyed(self):
+        """被連續戳太多次：皺眉、冒汗，走開一點。"""
+        self.show_expression("yuck", 2400)
+        self.overlay.say(random.choice(tr("say_annoyed")), 2500)
+        self.overlay.burst("sweat", 2)
+        if self.activity in (None, "hold") and self.mode != "sleep":
+            back = -1 if self.direction != LEFT else 1
+            r = self.screen_rect()
+            tx = max(r.left(), min(r.right() - self.width(), self.x() + back * 200))
+            self.hold(1200, then=lambda: self.go_to(tx, self.y(), then=self._resume, speed=5))
+
+    # ---------------- 玩具 ---------------- #
+    def play_with(self, toy):
+        if self.activity in ("home", "drag", "eat", "jump", "fall", "zoom"):
+            return
+        self._drop_spot()
+        if self.activity == "sleep":
+            self.wake(quiet=True, force=True)
+        self._stop_all()
+        self.activity = "play"
+        self.toy = toy
+        self.perch = None
+        self.fx, self.fy = float(self.x()), float(self.y())
+        self._pounce_at = time.monotonic() + random.uniform(0.3, 1.2)
+        self.move_timer.start(self._move_ms())
+
+    def stop_play(self, resume=True):
+        if self.toy is None:
+            return
+        self.toy = None
+        if self.activity in ("play", "jump"):
+            self._stop_all()
+            self.activity = None
+            if resume:
+                self._resume()
+
+    def _play_target(self):
+        tx, ty = self.toy.point()
+        gx = tx - self.width() / 2
+        if self.mode in ("windows", "dock"):
+            return gx, self.ground_y()
+        return gx, ty - (self.height() - self.foot_off()) + 4
+
+    def _play_step(self):
+        if self.toy is None or not self.toy.alive:
+            self.stop_play()
+            return
+        gx, gy = self._play_target()
+        dist = ((gx - self.fx) ** 2 + (gy - self.fy) ** 2) ** 0.5
+        if dist < 34:
+            if self.walking:
+                self.anim_timer.stop()
+                self.walking = False
+                self.frame = STAND_FRAME
+                self.update()
+            if time.monotonic() >= self._pounce_at:
+                self._pounce_at = time.monotonic() + random.uniform(1.2, 2.4)
+                self.jump_to(gx + random.uniform(-10, 10), gy, None, then=self._after_pounce)
+                self._arc = 38
+            return
+        if not self.walking:
+            self.walking = True
+            self.anim_timer.start(self._anim_ms() // 2)
+        self._step_towards(gx, gy, self._speed(9))
+
+    def _after_pounce(self):
+        self.overlay.burst("sparkle", 2)
+        if self.toy is not None and self.toy.alive:
+            self.activity = "play"
+            self.move_timer.start(self._move_ms())
+        else:
+            self.toy = None
+            self._resume()
+
+    # ---------------- 紙箱、貓跳台 ---------------- #
+    def visit(self, spot):
+        """走到家具旁邊：紙箱就鑽進去，貓跳台就跳上去。"""
+        x, y = spot.approach(self)
+        self.go_to(x, y, then=lambda: self._arrive_spot(spot), speed=6)
+
+    def _arrive_spot(self, spot):
+        if not spot.alive or spot.occupant is not None:
+            self._resume()
+            return
+        if spot.kind == "box":
+            self._stop_all()
+            self.activity = "box"
+            self.spot = spot
+            self.expression = None
+            self.hide()
+            self.overlay.hide()
+            spot.occupy(self)
+        else:
+            tx, ty = spot.perch(self)
+            spot.occupant = self
+            self.spot = spot
+            self.jump_to(tx, ty, None, then=self._sit_tree)
+            self._arc = 30
+        self.spot_timer.start(random.randint(15_000, 45_000))
+
+    def _sit_tree(self):
+        if self.spot is None:
+            self._resume()
+            return
+        self._stop_all()
+        self.activity = "tree"
+        self.direction = DOWN
+        self.update()
+        self.overlay.burst("heart", 2)
+
+    def leave_spot(self):
+        spot = self.spot
+        if spot is None:
+            return
+        if self.activity == "box" or (self.activity == "sleep" and spot.kind == "box"):
+            self._drop_spot()
+            self._resume()
+        elif spot.kind == "tree":
+            self._drop_spot()
+            if self.activity == "sleep":
+                self.wake(quiet=True, force=True)
+            if self.activity in (None, "tree"):
+                x = self.x() + random.choice((-1, 1)) * self.width()
+                self.jump_to(x, self.ground_y(), None, then=self._resume)
+
+    def _drop_spot(self):
+        """馬上離開家具（被叫去做別的事時）。"""
+        spot, self.spot = self.spot, None
+        self.spot_timer.stop()
+        if spot is None:
+            return
+        spot.release(self)
+        if self.activity == "box":
+            self.activity = None
+            x, y = spot.approach(self)
+            self._move_to(x, y, clamp=False)
+            if not self.ctrl.all_hidden:
+                self.show()
+                self.raise_()
+        elif self.activity == "tree":
+            self.activity = None
 
     # ---------------- 設定變更 ---------------- #
     def set_color(self, color):
@@ -765,6 +1005,8 @@ class Cat(QWidget):
     def set_mode(self, mode):
         if self.activity == "home":
             self._exit_home()
+        self._drop_spot()
+        self.stop_play(resume=False)
         if self.activity == "sleep":
             self.wake(quiet=True, force=True)
         self.mode = mode
@@ -808,6 +1050,8 @@ class Cat(QWidget):
 
     def dispose(self):
         self._stop_all()
+        self._drop_spot()
+        self.spot_timer.stop()
         self.ctrl.house.remove(self)          # 在家裡被送走的貓也要離開貓屋（不然煙囪會一直冒煙）
         if getattr(self, "_food", None):
             self._food.close()

@@ -261,3 +261,127 @@ def dock_info():
         info["width"] = (icons - 1) * pitch + seps * pitch * 0.8 + tile * 1.1
     _dock_cache.update(t=now, info=info)
     return info
+
+
+# ---------------- 低耗電模式 ---------------- #
+def low_power_mode():
+    """macOS「低耗電模式」是否開啟（macOS 12 以上；取不到時回傳 False）。"""
+    if not _objc:
+        return False
+    try:
+        info = _send(ctypes.c_void_p, _objc.objc_getClass(b"NSProcessInfo"), b"processInfo")
+        sel = _objc.sel_registerName(b"isLowPowerModeEnabled")
+        if not _send(ctypes.c_bool, ctypes.c_void_p(info), b"respondsToSelector:", ctypes.c_void_p(sel)):
+            return False
+        return bool(_send(ctypes.c_bool, ctypes.c_void_p(info), b"isLowPowerModeEnabled"))
+    except Exception:
+        return False
+
+
+# ---------------- 全螢幕偵測 ---------------- #
+def fullscreen_active(screens):
+    """最前面的一般視窗是否剛好蓋滿整個螢幕（全螢幕 App、簡報）。screens：[(x, y, w, h)]。"""
+    wins = list_windows()
+    if not wins:
+        return False
+    _, x, y, w, h = wins[0]
+    return any(abs(x - sx) <= 1 and abs(y - sy) <= 1 and abs(w - sw) <= 1 and abs(h - sh) <= 1
+               for sx, sy, sw, sh in screens)
+
+
+# ---------------- 全域快捷鍵（Carbon，不需要「輔助使用」權限）---------------- #
+_hotkey = {"cb": None, "handler": None, "refs": []}
+
+
+def register_hotkey(callback, keycode=46, modifiers=0x1000 | 0x0800):
+    """註冊全域快捷鍵（預設 ⌃⌥M）。按下時在主執行緒呼叫 callback()。成功回傳 True。"""
+    if not IS_MAC:
+        return False
+    try:
+        carbon = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Carbon.framework/Carbon")
+
+        class EventTypeSpec(ctypes.Structure):
+            _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
+
+        class EventHotKeyID(ctypes.Structure):
+            _fields_ = [("signature", ctypes.c_uint32), ("id", ctypes.c_uint32)]
+
+        HANDLER = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+        carbon.GetApplicationEventTarget.restype = ctypes.c_void_p
+        carbon.InstallEventHandler.argtypes = [ctypes.c_void_p, HANDLER, ctypes.c_ulong,
+                                               ctypes.POINTER(EventTypeSpec), ctypes.c_void_p,
+                                               ctypes.POINTER(ctypes.c_void_p)]
+        carbon.InstallEventHandler.restype = ctypes.c_int32
+        carbon.RegisterEventHotKey.argtypes = [ctypes.c_uint32, ctypes.c_uint32, EventHotKeyID,
+                                               ctypes.c_void_p, ctypes.c_uint32,
+                                               ctypes.POINTER(ctypes.c_void_p)]
+        carbon.RegisterEventHotKey.restype = ctypes.c_int32
+
+        def _handler(_call, _event, _data):
+            try:
+                callback()
+            except Exception:
+                pass
+            return 0
+
+        handler = HANDLER(_handler)
+        target = carbon.GetApplicationEventTarget()
+        spec = EventTypeSpec(int.from_bytes(b"keyb", "big"), 5)      # kEventHotKeyPressed
+        ref = ctypes.c_void_p()
+        if carbon.InstallEventHandler(target, handler, 1, ctypes.byref(spec), None, ctypes.byref(ref)) != 0:
+            return False
+        hk = ctypes.c_void_p()
+        hid = EventHotKeyID(int.from_bytes(b"meow", "big"), 1)
+        if carbon.RegisterEventHotKey(keycode, modifiers, hid, target, 0, ctypes.byref(hk)) != 0:
+            return False
+        _hotkey.update(cb=callback, handler=handler)
+        _hotkey["refs"] += [ref, hk, carbon]
+        return True
+    except Exception:
+        return False
+
+
+# ---------------- 開機自動啟動（LaunchAgent）---------------- #
+AGENT_LABEL = "io.github.tanuki3701.meowmentum"
+
+
+def _agent_path():
+    return os.path.expanduser(f"~/Library/LaunchAgents/{AGENT_LABEL}.plist")
+
+
+def login_item_enabled():
+    return os.path.exists(_agent_path())
+
+
+def set_login_item(on):
+    """開機時自動打開：在 ~/Library/LaunchAgents 放一個設定檔（不需要管理者密碼）。"""
+    path = _agent_path()
+    if not on:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        return True
+    if getattr(sys, "frozen", False):
+        app = os.path.abspath(os.path.join(os.path.dirname(sys.executable), "..", ".."))
+        args = ["/usr/bin/open", "-a", app]
+    else:
+        main = os.path.abspath(os.path.join(os.path.dirname(__file__), "main.py"))
+        args = [sys.executable, main]
+    from xml.sax.saxutils import escape
+    items = "".join(f"<string>{escape(a)}</string>" for a in args)
+    plist = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+             '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+             '<plist version="1.0"><dict>'
+             f'<key>Label</key><string>{AGENT_LABEL}</string>'
+             f'<key>ProgramArguments</key><array>{items}</array>'
+             '<key>RunAtLoad</key><true/>'
+             '</dict></plist>\n')
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(plist)
+        return True
+    except OSError:
+        return False

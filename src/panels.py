@@ -83,12 +83,14 @@ class PixelButton(QAbstractButton):
             iw, ih = pm.width() / pm.devicePixelRatio(), pm.height() / pm.devicePixelRatio()
             p.drawPixmap(int(r.center().x() - iw / 2 + 1), int(r.center().y() - ih / 2 + 1), pm)
             return
-        if self.isChecked():
+        if not self.isEnabled():
+            fill = QColor(226, 216, 196)
+        elif self.isChecked():
             fill = QColor(250, 160, 120)
         else:
             fill = QColor(242, 214, 140) if hover else pixel.GOLD
         pixel.draw_box(p, r, 2, fill=fill, light=QColor(250, 232, 180), shadow=not (self.isDown() or self.isChecked()))
-        p.setPen(pixel.INK)
+        p.setPen(pixel.INK if self.isEnabled() else QColor(160, 150, 136))
         p.setFont(self.font())
         p.drawText(r, Qt.AlignCenter, self.text())
 
