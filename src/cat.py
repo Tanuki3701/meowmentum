@@ -14,6 +14,7 @@ from PySide6.QtGui import QCursor, QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
 import i18n
+import interior
 import pixel
 import sprites
 from glassmenu import GlassMenu
@@ -30,7 +31,8 @@ MODES = ["idle", "random", "follow", "windows", "dock", "sleep"]
 DIRECTIONS = {DOWN: "dir_down", LEFT: "dir_left", RIGHT: "dir_right", UP: "dir_up"}
 SIZES = [2, 3, 4]
 
-MOVE_INTERVAL = 33       # 移動中約 30fps
+MOVE_INTERVAL = 16       # 移動中約 60fps（距離依實際經過的時間計算，計時器晚到也不會頓）
+TICK = 0.033             # 速度的單位：每 33ms 走幾點（以前的 30fps 單位）
 ANIM_INTERVAL = 150      # 走路動畫換格速度
 POLL_INTERVAL = 300      # 跟隨模式待命 / 站在視窗上休息時的檢查間隔
 BREATH_INTERVAL = 1100   # 睡覺呼吸動畫
@@ -70,6 +72,9 @@ class Cat(QWidget):
         self._waypoints = []
         self.toy = None           # 正在追的玩具
         self.spot = None          # 待在哪個家具裡／上（紙箱、貓跳台）
+        self.indoor = None        # 在貓屋「裡面」看的時候：住在哪間貓屋
+        self._indoor_kind = None
+        self._fade_anim = None
 
         self.direction = self.idle_direction
         self.frame = STAND_FRAME
@@ -88,6 +93,9 @@ class Cat(QWidget):
         self.overlay = Overlay(self)
 
         self.move_timer = self._timer(self._tick)
+        self.move_timer.setTimerType(Qt.PreciseTimer)   # 走路要順：移動用精準計時器
+        self._last_tick = 0.0
+        self._k = 1.0
         self.anim_timer = self._timer(self._next_frame)
         self.anim_timer.setInterval(ANIM_INTERVAL)
         self.act_timer = self._timer(self._act_step)
@@ -97,6 +105,8 @@ class Cat(QWidget):
         self._expr_side = 0
         self.expr_timer = self._timer(self._clear_expression)
         self.expr_timer.setSingleShot(True)
+        self.indoor_timer = self._timer(self._indoor_wake)  # 在屋子裡睡多久
+        self.indoor_timer.setSingleShot(True)
         self.spot_timer = self._timer(self.leave_spot)     # 在紙箱裡／貓跳台上待多久
         self.spot_timer.setSingleShot(True)
         self.hold_timer = self._timer(self._end_hold)   # 「愣住一下」之後才恢復原本的模式
@@ -194,11 +204,18 @@ class Cat(QWidget):
         return base * (0.5 if self.ctrl.tired else 1.0)
 
     def _anim_ms(self):
-        return ANIM_INTERVAL * (2 if (self.ctrl.tired or self.ctrl.low_power) else 1)
+        return ANIM_INTERVAL * (2 if self.ctrl.tired else 1)
 
     def _move_ms(self):
-        """低耗電模式：移動改成約 15fps（走的距離一樣，只是畫面更新少一半）。"""
-        return MOVE_INTERVAL * 2 if self.ctrl.low_power else MOVE_INTERVAL
+        return MOVE_INTERVAL
+
+    def _gait(self, speed):
+        """走路換格的速度跟著移動速度：走得快腳步就快，看起來不會滑行。"""
+        if not self.walking or self.activity == "jump":
+            return
+        want = int(max(70, min(160, 560 / max(0.5, speed))))
+        if abs(self.anim_timer.interval() - want) > 12:
+            self.anim_timer.setInterval(want)
 
     # ---------------- 走路狀態 ---------------- #
     def _set_walking(self, walking, interval=MOVE_INTERVAL):
@@ -225,10 +242,14 @@ class Cat(QWidget):
     def refresh_speed(self):
         if self.walking:
             self.anim_timer.start(self._anim_ms())
-            if self.move_timer.interval() in (MOVE_INTERVAL, MOVE_INTERVAL * 2):
-                self.move_timer.start(self._move_ms())
+
 
     def _apply_mode(self):
+        if self.indoor is not None:
+            self._stop_all()
+            self.activity = None
+            self._indoor_next()
+            return
         if self.spot is not None and self.spot.kind == "tree" and self.spot_timer.isActive():
             self._stop_all()                       # 還在貓跳台上：醒來後繼續坐著
             self.activity = "tree"
@@ -262,7 +283,7 @@ class Cat(QWidget):
         self._apply_mode()
 
     def _rest_done(self):
-        if self.activity is not None:
+        if self.activity is not None or self.indoor is not None:
             return
         if self.mode == "random":
             self._start_wandering()
@@ -302,6 +323,10 @@ class Cat(QWidget):
 
     # ---------------- 每一步 ---------------- #
     def _tick(self):
+        now = time.monotonic()
+        dt = now - self._last_tick
+        self._last_tick = now
+        self._k = dt / TICK if 0 < dt < 0.1 else MOVE_INTERVAL / 1000 / TICK
         a = self.activity
         if a == "drag":
             return
@@ -324,8 +349,8 @@ class Cat(QWidget):
                 self._windows_step()
 
     def _step_towards(self, tx, ty, speed):
-        if self.ctrl.low_power and self.move_timer.interval() == MOVE_INTERVAL * 2:
-            speed *= 2
+        self._gait(speed)
+        speed *= self._k
         dx, dy = tx - self.fx, ty - self.fy
         if abs(dx) <= speed and abs(dy) <= speed:
             self._move_to(tx, ty, clamp=self.mode != "windows" and not self._crossing)
@@ -334,7 +359,10 @@ class Cat(QWidget):
         self._face(dx, dy)
         sx = max(-speed, min(speed, dx))
         sy = max(-speed, min(speed, dy))
+        before = (self.fx, self.fy)
         self._move_to(self.fx + sx, self.fy + sy, clamp=self.mode != "windows" and not self._crossing)
+        if abs(self.fx - before[0]) < 0.01 and abs(self.fy - before[1]) < 0.01:
+            return True                    # 被螢幕邊緣擋住、走不過去：就當作到了
         return False
 
     def _wander_step(self):
@@ -357,9 +385,10 @@ class Cat(QWidget):
             return
         if not self.walking:
             self._set_walking(True)
-        top = self._speed(FOLLOW_MAX_SPEED)
-        sx = max(-top, min(top, dx * 0.1))
-        sy = max(-top, min(top, dy * 0.1))
+        top = self._speed(FOLLOW_MAX_SPEED) * self._k
+        f = min(1.0, 0.1 * self._k)
+        sx = max(-top, min(top, dx * f))
+        sy = max(-top, min(top, dy * f))
         self._face(dx, dy)
         self._move_to(self.fx + sx, self.fy + sy)
 
@@ -450,7 +479,7 @@ class Cat(QWidget):
         self.move_timer.start(MOVE_INTERVAL)
 
     def _jump_step(self):
-        self._jt += 1
+        self._jt += self._k
         t = min(1.0, self._jt / self._jn)
         (x0, y0), (x1, y1) = self._j0, self._j1
         x = x0 + (x1 - x0) * t
@@ -480,8 +509,8 @@ class Cat(QWidget):
         self.move_timer.start(MOVE_INTERVAL)
 
     def _fall_step(self):
-        self.vy = min(self.vy + 1.5, 28)
-        ny = self.fy + self.vy
+        self.vy = min(self.vy + 1.5 * self._k, 28)
+        ny = self.fy + self.vy * self._k
         foot = self.height() - self.foot_off()
         prev_feet, new_feet = self.fy + foot, ny + foot
         cx = self.center_x()
@@ -501,14 +530,16 @@ class Cat(QWidget):
     def _landed(self):
         self.activity = None
         self.vy = 0
-        if self.mode == "windows":
+        if self.mode == "windows" and self.indoor is None:
             self._set_walking(False)
             self.rest_timer.start(random.randint(800, 2500))
         else:
             self._resume()
 
     # ---------------- 特別動作 ---------------- #
-    def go_to(self, x, y, then=None, speed=7):
+    def go_to(self, x, y, then=None, speed=7, keep_indoor=False):
+        if self.indoor is not None and not keep_indoor:
+            self._leave_indoor_silent()
         if self.activity == "home":
             self._exit_home()
         self._drop_spot()
@@ -660,6 +691,11 @@ class Cat(QWidget):
     def _react(self, flavor):
         """不同口味的罐罐，貓咪有不同反應。"""
         ov = self.overlay
+        if flavor == "bowl":                 # 在家裡吃自己碗裡的飯
+            self.show_expression("happy", 2200)
+            ov.burst("heart", 2)
+            self.hold(2200)
+            return
         if flavor == "chicken":
             self.show_expression("happy", 3000)
             ov.say(tr("react_chicken"), 3000)
@@ -716,36 +752,192 @@ class Cat(QWidget):
         if self._step_towards(*self.target, 15):
             self.target = None
 
+    # ---------------- 淡入淡出 ---------------- #
+    def _fade(self, value, ms=260, done=None):
+        from PySide6.QtCore import QEasingCurve, QPropertyAnimation
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+        a = QPropertyAnimation(self, b"windowOpacity", self)
+        a.setDuration(ms)
+        a.setStartValue(self.windowOpacity())
+        a.setEndValue(value)
+        a.setEasingCurve(QEasingCurve.InOutQuad)
+        if done:
+            a.finished.connect(done)
+        a.start()
+        self._fade_anim = a
+
     # ---------------- 回家 ---------------- #
     def go_home(self, house):
-        if self.activity == "home":
+        if self.activity in ("home", "entering") or self.indoor is not None:
             return
         x, y = house.door_cat_pos(self)
-        self.go_to(x, y, then=lambda: self._enter_home(house), speed=8)
+        self.go_to(x, y, then=lambda: self._enter_home(house), speed=6)
 
     def _enter_home(self, house):
+        """走到門口：門打開，貓咪轉身走進去慢慢消失。"""
         self._stop_all()
-        self.activity = "home"
+        self.activity = "entering"
         self.expression = None
-        self.hide()
-        house.add(self)
+        house.open_door()
+        self.direction = UP
+        self.walking = True
+        self.anim_timer.start(ANIM_INTERVAL)
+        self.update()
+
+        def gone():
+            self.anim_timer.stop()
+            self.walking = False
+            self.hide()
+            self.overlay.hide()
+            self.setWindowOpacity(1.0)
+            self.activity = "home"
+            house.add(self)
+            if house.view == "inside":
+                self.enter_indoor(house, from_door=True)
+        self._fade(0.0, 300, gone)
 
     def _exit_home(self):
+        """馬上出來（換模式、被叫去做別的事時）。"""
         house = self.ctrl.house
         house.remove(self)
         x, y = house.door_cat_pos(self)
         self.activity = None
         self._move_to(x, y, clamp=False)
+        self.setWindowOpacity(1.0)
         self.show()
         self.raise_()
 
     def leave_home(self):
+        if self.indoor is not None:
+            house = self.indoor
+            x = house.indoor_spot_x(self, "door")
+            self.go_to(x, house.indoor_floor_y(self), then=lambda: self._exit_indoor(house),
+                       speed=5, keep_indoor=True)
+            return
         if self.activity != "home":
             return
-        self._exit_home()
+        self._walk_out(self.ctrl.house)
+
+    def _walk_out(self, house):
+        """門打開，貓咪從門口慢慢出現，再走出來幾步。"""
+        house.open_door()
+        x, y = house.door_cat_pos(self)
+        self.activity = "entering"
+        self._move_to(x, y, clamp=False)
         self.direction = DOWN
-        self.overlay.say(tr("say_hello"), 1800)
-        self._resume()
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
+        self.update()
+
+        def shown():
+            house.remove(self)
+            self.activity = None
+            self.overlay.say(tr("say_hello"), 1800)
+            side = random.choice((-1, 1))
+            self.go_to(x + side * self.width() * 0.7, y, then=self._resume, speed=3)
+        self._fade(1.0, 300, shown)
+
+    # ---------------- 在貓屋裡面 ---------------- #
+    def enter_indoor(self, house, from_door=False):
+        """貓屋換成「裡面」的樣子：在家的貓咪出現在房間裡，可以點、拖、按右鍵。"""
+        self._stop_all()
+        self.indoor = house
+        self.activity = None
+        self.expression = None
+        lo, hi = house.indoor_x_range(self)
+        x = house.indoor_spot_x(self, "door") if from_door else random.uniform(lo, hi)
+        self._move_to(x, house.indoor_floor_y(self), clamp=False)
+        self.direction = DOWN
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
+        self.update()
+        self._fade(1.0, 320, lambda: self.indoor is house and self._resume())
+
+    def indoor_to_home(self, house):
+        """貓屋換回「外面」的樣子：房間裡的貓咪回到看不見的家裡。"""
+        self._stop_all()
+        self.indoor_timer.stop()
+        self.indoor = None
+        self._indoor_kind = None
+        if self.activity == "sleep":
+            self.act_timer.stop()
+        self.activity = "home"
+        self.expression = None
+        self.hide()
+        self.overlay.hide()
+        self.setWindowOpacity(1.0)
+
+    def _exit_indoor(self, house):
+        """從房間的門走出去：在門口慢慢消失，再從屋外出現。"""
+        self._stop_all()
+        self.activity = "entering"
+        self.direction = UP
+
+        def outside():
+            self.indoor = None
+            self.hide()
+            self._walk_out(house)
+        self._fade(0.0, 260, outside)
+
+    def _leave_indoor_silent(self):
+        house, self.indoor = self.indoor, None
+        self.indoor_timer.stop()
+        self._indoor_kind = None
+        if house is not None:
+            house.remove(self)
+
+    def _indoor_next(self):
+        house = self.indoor
+        if house is None or house.view != "inside":
+            return
+        y = house.indoor_floor_y(self)
+        lo, hi = house.indoor_x_range(self)
+        others = [c for c in house.residents if c is not self and c.indoor is house]
+        kinds = ["walk", "walk", "walk", "walk", "sit", "sit", "sleep", "eat", "eat"]
+        if self.ctrl.sleeping:
+            kinds = ["sleep"]
+        k = random.choice(kinds)
+        if k in ("sleep", "eat") and any(c._indoor_kind == k for c in others):
+            k = "walk" if (k == "eat" or random.random() < 0.6) else "nap"
+        self._indoor_kind = k
+        if k == "walk":
+            self.go_to(random.uniform(lo, hi), y, then=lambda: self.hold(random.randint(1200, 3500)),
+                       speed=2.6, keep_indoor=True)
+        elif k == "sit":
+            self.direction = DOWN
+            self.update()
+            self.hold(random.randint(2500, 6000))
+        elif k in ("sleep", "nap"):
+            tx = house.indoor_spot_x(self, "cushion") if k == "sleep" else random.uniform(lo, hi)
+            self.go_to(tx, y, then=self._indoor_sleep, speed=2.6, keep_indoor=True)
+        else:
+            self.go_to(house.indoor_spot_x(self, "bowl"), y, then=self._indoor_eat, speed=3,
+                       keep_indoor=True)
+
+    def _indoor_sleep(self):
+        self.direction = random.choice((LEFT, RIGHT))
+        self.sleep()
+        self.indoor_timer.start(random.randint(14_000, 32_000))
+
+    def _indoor_wake(self):
+        if self.activity == "sleep" and self.indoor is not None and not self.ctrl.sleeping:
+            self.wake(quiet=True, force=True)
+
+    def _indoor_eat(self):
+        house = self.indoor
+
+        class _Bowl:
+            flavor = "bowl"
+
+            def center_x(_self):
+                return house._gx(sum(interior.BOWL_X) / 2)
+
+            def close(_self):
+                pass
+        self.eat(_Bowl())
 
     # ---------------- 滑鼠：點擊、拖曳 ---------------- #
     def mousePressEvent(self, e):
@@ -778,6 +970,16 @@ class Cat(QWidget):
         if e.button() != Qt.LeftButton or not self._press:
             return
         self._press = None
+        if self.activity == "drag" and self.indoor is not None:
+            house = self.indoor
+            feet = QPoint(int(self.center_x()), int(self.y() + self.height() - self.foot_off() - 6))
+            if house.room_contains(feet):
+                lo, hi = house.indoor_x_range(self)
+                self.activity = None
+                self._move_to(max(lo, min(hi, self.x())), house.indoor_floor_y(self), clamp=False)
+                self._resume()
+                return
+            self._leave_indoor_silent()                # 被拖到屋子外面：就出門了
         if self.activity == "drag":
             self.activity = None
             x, _ = self._clamp(self.x(), self.y())
@@ -1050,6 +1252,7 @@ class Cat(QWidget):
 
     def dispose(self):
         self._stop_all()
+        self._leave_indoor_silent()
         self._drop_spot()
         self.spot_timer.stop()
         self.ctrl.house.remove(self)          # 在家裡被送走的貓也要離開貓屋（不然煙囪會一直冒煙）

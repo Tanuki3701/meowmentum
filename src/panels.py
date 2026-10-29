@@ -868,7 +868,7 @@ class Food(QWidget):
         self.on_land = on_land
         self.move(int(x - self.width() / 2), top)
         self.timer = QTimer(self)
-        self.timer.setTimerType(Qt.CoarseTimer)
+        self.timer.setTimerType(Qt.PreciseTimer)
         self.timer.timeout.connect(self._fall)
         self.show()
         show_on_all_spaces(self)

@@ -22,7 +22,8 @@ class Social(QObject):
 
     def _free(self):
         return [c for c in self.ctrl.cats
-                if c.activity is None and c.mode in FREE_MODES and c.isVisible() and c.spot is None]
+                if c.activity is None and c.mode in FREE_MODES and c.isVisible() and c.spot is None
+                and c.indoor is None]
 
     def _tick(self):
         ctrl = self.ctrl
@@ -92,7 +93,7 @@ class Social(QObject):
     # ---------------- 一起睡 ---------------- #
     def cuddle(self):
         """大家要睡覺時，走到第一隻貓旁邊擠在一起睡。"""
-        cats = [c for c in self.ctrl.cats if c.isVisible() and c.spot is None]
+        cats = [c for c in self.ctrl.cats if c.isVisible() and c.spot is None and c.indoor is None]
         if len(cats) < 2:
             return
         anchor = cats[0]

@@ -1,370 +1,410 @@
-"""貓屋裡面：可以打開來看看在家的貓咪在做什麼。
+"""貓屋裡面：像娃娃屋一樣把貓屋的前牆拿掉，直接在桌面上看到屋子裡。
 
-房間依照時間（白天／晚上）、節慶和你在商店買的擺設變化；
-在家的貓咪會睡在軟墊上、吃飯、散步、玩毛線球。
-省電：只有這個視窗打開時才跑動畫（每 0.16 秒一格），關掉就停。
+這不是另一個視窗：貓屋本身會變成剖面圖，在家的貓咪就是桌面上真正的貓，
+可以點、可以拖、可以按右鍵。這個檔案只負責畫房間（畫好一次就快取起來）。
 """
-import random
-
-from PySide6.QtCore import QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor
 
 import art
-import pixel
-import seasons
-import sprites
-from i18n import tr
 
-RU = 3                      # 房間每一格 = 3pt
-RW, RH = 112, 62            # 房間大小（格）
-FLOOR = 42                  # 地板開始的 y
-CAT_SCALE = 2
-FRAME_MS = 160
+# ---------------- 尺寸（格） ---------------- #
+IW, IH = 104, 76            # 整張剖面圖
+IG = 66                     # 地板表面（貓咪腳踩的位置）
+GRASS = 72                  # 草地頂端（貼齊桌面底部）
+ROOM_L, ROOM_R = 14, 89     # 房間內牆的左右邊（貓咪中心可以走的範圍會再內縮）
+EAVE = 24                   # 屋簷
+CHIMNEY = (77, 0)           # 煙囪口
 
-# 每樣擺設在房間裡的位置（格）
-SPOTS = {
-    "cushion": (70, 48), "bowl": (24, 51), "rug": (36, 50), "plant": (100, 30),
-    "lamp": (86, 12), "painting": (66, 9), "scratcher": (22, 26), "fishtank": (56, 30),
-    "yarn": (58, 55), "pumpkin": (6, 47), "xmas_tree": (98, 20), "lantern": (30, 2),
+DOOR = (16, 41, 12, 25)     # 室內的門 (x, y, w, h)
+CUSHION_X = (66, 87)        # 軟墊
+BOWL_X = (37, 46)           # 碗
+
+# 房屋外觀用的顏色（和 house.png 同一組）
+C = {
+    "K": (58, 55, 55), "R": (238, 104, 94), "r": (200, 70, 80), "h": (255, 156, 132), "e": (172, 58, 74),
+    "B": (222, 128, 98), "b": (178, 88, 76), "m": (246, 204, 176), "c": (124, 112, 140),
+    "T": (255, 222, 148), "t": (238, 188, 112), "l": (255, 242, 200), "Cr": (255, 251, 242),
+    "Q": (98, 200, 190), "q": (56, 150, 152), "Y": (255, 214, 84), "y": (232, 170, 56),
+    "G": (108, 198, 96), "g": (64, 150, 84), "j": (172, 228, 112), "P": (255, 132, 176),
+    "p": (226, 88, 140), "V": (182, 146, 244), "W": (255, 255, 255), "O": (255, 168, 64),
+    "Z": (246, 136, 160), "z": (214, 98, 132), "N": (255, 236, 222), "n": (255, 196, 206),
+    # 室內
+    "wall": (255, 238, 218), "stripe": (255, 224, 212), "dot": (250, 200, 196),
+    "wain": (184, 230, 218), "wain_d": (146, 204, 192), "wain_l": (214, 244, 236),
+    "wood": (214, 160, 108), "wood_d": (176, 124, 82), "wood_l": (240, 196, 140),
+    "attic": (132, 90, 78), "attic_d": (104, 70, 62), "beam": (168, 116, 92),
+    "stone": (196, 186, 206), "stone_d": (150, 142, 166),
 }
 
+BUSH = [
+    "......KKKKK.......",
+    "...KKKjjGGGKKK....",
+    "..KjjGPGGjGGGGKK..",
+    ".KjGPpPGGGGVGGGGK.",
+    ".KGGGPGGYGVWVGjGK.",
+    "KjGGGGGYOYGVGGPGGK",
+    "KGGVGGGGYGGGGPpPgK",
+    "KgGWVGgGGGgGGGPGgK",
+    "KggVgggggggggggggK",
+]
 
-# ---------------- 擺設的像素圖 ---------------- #
-def _draw_item(c, item, x, y, night=False):
+# 精緻一點的貓掌：粉紅門上的奶油色大肉球 + 四顆小肉球，帶一圈深粉紅描邊和亮點
+PAW = [
+    "..zz....zz..",
+    ".zNNz..zNNz.",
+    ".zNnz..zNnz.",
+    "..zz....zz..",
+    "zz..zzzz..zz",
+    "zNz.zNNz.zNz",
+    "zNz.zNNz.zNz",
+    ".z.zNNNNz.z.",
+    "..zNNNNNNz..",
+    "..zNNNnNNz..",
+    "..zNNnnnNz..",
+    "...zNNNNz...",
+    "....zzzz....",
+]
+
+
+def _c(k):
+    return C.get(k) or art.COLORS[k]
+
+
+class _Canvas(art.Canvas):
+    def c(self, col):
+        if isinstance(col, str):
+            col = _c(col)
+        return QColor(*col) if isinstance(col, tuple) else col
+
+    def grid(self, x, y, grid, flip=False):
+        for gy, row in enumerate(grid):
+            row = row[::-1] if flip else row
+            for gx, ch in enumerate(row):
+                if ch != ".":
+                    self.px(x + gx, y + gy, ch)
+
+
+def glow(c, cx, cy, r, color=(255, 214, 140), alphas=(70, 46, 26), clip=None):
+    """像素風的圓形光暈：幾圈一格一格的同心圓，最外圈用棋盤格點出漸層。"""
+    import math
+    n = len(alphas)
+    for y in range(int(cy - r), int(cy + r) + 1):
+        for x in range(int(cx - r), int(cx + r) + 1):
+            if clip and not (clip[0] <= x <= clip[1] and clip[2] <= y <= clip[3]):
+                continue
+            d = math.hypot((x - cx), (y - cy) * 1.15) / r
+            if d > 1:
+                continue
+            band = min(n - 1, int(d * n))
+            c.px(x, y, QColor(*color, alphas[band]))
+
+
+def _roof_half(y, apex=2):
+    return int((y - apex) * 50 / 22) + 1
+
+
+# ---------------- 擺設 ---------------- #
+def _shadow(c, x, w, y=IG):
+    c.rect(x + 1, y, w - 2, 1, QColor(60, 40, 40, 60))
+
+
+def draw_item(c, item, night=False):
     if item == "cushion":
-        c.rect(x, y + 2, 26, 7, "K")
-        c.rect(x + 2, y, 22, 2, "K")
-        c.rect(x + 1, y + 2, 24, 5, "P")
-        c.rect(x + 3, y + 1, 20, 2, "H")
-        c.rect(x + 3, y + 6, 20, 1, (214, 120, 140))
+        x0, x1 = CUSHION_X
+        w = x1 - x0
+        _shadow(c, x0, w)
+        c.rect(x0 + 1, IG - 7, w - 2, 1, "K")
+        c.rect(x0, IG - 6, w, 6, "K")
+        c.rect(x0 + 1, IG - 6, w - 2, 5, "P")
+        c.rect(x0 + 2, IG - 7, w - 4, 2, (255, 180, 206))
+        c.rect(x0 + 3, IG - 6, w - 6, 1, (255, 214, 228))
+        c.rect(x0 + 1, IG - 2, w - 2, 1, (214, 96, 140))
+        for x in range(x0 + 4, x1 - 2, 4):
+            c.px(x, IG - 4, (255, 214, 228))
     elif item == "bowl":
-        c.rect(x, y, 10, 1, "K")
-        c.rect(x + 1, y - 1, 8, 1, (160, 104, 60))
-        c.px(x + 3, y - 2, (160, 104, 60)); c.px(x + 6, y - 2, (130, 84, 50))
-        c.rect(x, y + 1, 10, 3, "K")
-        c.rect(x + 1, y + 1, 8, 2, "B")
-        c.rect(x + 2, y + 1, 2, 1, "U")
+        x0, x1 = BOWL_X
+        _shadow(c, x0, x1 - x0)
+        c.rect(x0 + 2, IG - 6, 5, 1, (186, 120, 70))
+        c.px(x0 + 3, IG - 7, (214, 150, 90)); c.px(x0 + 5, IG - 7, (186, 120, 70))
+        c.rect(x0, IG - 5, x1 - x0, 1, "K")
+        c.rect(x0, IG - 4, x1 - x0, 4, "K")
+        c.rect(x0 + 1, IG - 4, x1 - x0 - 2, 3, (98, 150, 214))
+        c.rect(x0 + 1, IG - 4, x1 - x0 - 2, 1, (150, 196, 240))
+        c.px(x0 + 4, IG - 2, "W"); c.px(x0 + 5, IG - 2, "W")
     elif item == "rug":
-        c.rect(x, y, 30, 8, "K")
-        c.rect(x + 1, y + 1, 28, 6, (246, 196, 120))
-        c.rect(x + 3, y + 2, 24, 4, (236, 150, 100))
-        c.rect(x + 5, y + 3, 20, 2, (250, 214, 150))
-    elif item == "plant":
-        c.rect(x + 1, y + 8, 8, 6, "K")
-        c.rect(x + 2, y + 9, 6, 4, (214, 120, 84))
-        c.rect(x + 2, y + 9, 6, 1, (236, 150, 110))
-        for dx, dy, h in ((4, 0, 8), (1, 3, 5), (7, 2, 6), (2, 1, 3), (6, 0, 3)):
-            c.rect(x + dx, y + dy, 2, h, "K")
-            c.rect(x + dx, y + dy + 1, 1, h - 1, "G")
+        c.rect(47, IG - 1, 22, 2, "K")
+        c.rect(48, IG - 1, 20, 1, (246, 196, 120))
+        for x in range(48, 68, 3):
+            c.px(x, IG - 1, (236, 140, 100))
+    elif item == "plant":                            # 窗台上的小盆栽
+        c.rect(54, 44, 6, 5, "K")
+        c.rect(55, 45, 4, 3, (226, 128, 92))
+        c.rect(55, 45, 4, 1, (246, 162, 120))
+        for dx, dy, h in ((56, 38, 6), (54, 40, 4), (58, 39, 5)):
+            c.rect(dx, dy, 2, h, "K")
+            c.rect(dx, dy + 1, 1, h - 1, "G")
+            c.px(dx + 1, dy + 1, "j")
     elif item == "lamp":
-        if night:
-            for r, a in ((9, 40), (6, 70)):
-                c.rect(x + 3 - r, y + 3 - r // 2, 6 + 2 * r, 6 + r, QColor(255, 220, 140, a))
-        c.rect(x, y, 10, 6, "K")
-        c.rect(x + 1, y + 1, 8, 4, "X" if night else "Y")
-        c.rect(x + 1, y + 1, 8, 1, "W" if night else "X")
-        c.rect(x + 4, y + 6, 2, 22, "K")
-        c.rect(x + 2, y + 27, 6, 1, "K")
+        x = 84
+        c.rect(x - 1, 40, 8, 6, "K")
+        c.rect(x, 41, 6, 4, (255, 236, 170) if night else (255, 214, 120))
+        c.rect(x, 41, 6, 1, "W" if night else (255, 236, 170))
+        c.rect(x + 2, 46, 2, IG - 47, "K")
+        c.rect(x, IG - 1, 6, 1, "K")
     elif item == "painting":
-        c.rect(x, y, 14, 11, "K")
-        c.rect(x + 1, y + 1, 12, 9, "A")
-        c.rect(x + 2, y + 2, 10, 7, (186, 228, 255))
-        c.rect(x + 2, y + 7, 10, 2, "G")
-        c.rect(x + 8, y + 3, 2, 2, "Y")
-        c.rect(x + 4, y + 5, 2, 2, "W")
+        c.rect(66, 29, 13, 10, "K")
+        c.rect(67, 30, 11, 8, (214, 160, 108))
+        c.rect(68, 31, 9, 6, (186, 228, 255))
+        c.rect(68, 35, 9, 2, "G")
+        c.rect(73, 32, 2, 2, "Y")
+        c.rect(69, 34, 3, 1, "j")
     elif item == "scratcher":
-        c.rect(x, y + 14, 12, 3, "K")
-        c.rect(x + 1, y + 15, 10, 1, "T")
-        c.rect(x + 3, y, 6, 15, "K")
-        c.rect(x + 4, y + 1, 4, 13, "E")
-        for yy in range(y + 2, y + 14, 2):
-            c.rect(x + 4, yy, 4, 1, "A")
-        c.rect(x + 2, y - 1, 8, 2, "K")
-        c.rect(x + 3, y - 1, 6, 1, "Q")
+        _shadow(c, 47, 8)
+        c.rect(47, IG - 2, 8, 2, "K")
+        c.rect(48, IG - 2, 6, 1, (186, 136, 96))
+        c.rect(49, IG - 16, 4, 14, "K")
+        c.rect(50, IG - 15, 2, 13, (238, 204, 152))
+        for y in range(IG - 14, IG - 2, 2):
+            c.rect(50, y, 2, 1, (214, 168, 112))
+        c.rect(48, IG - 18, 6, 2, "K")
+        c.rect(49, IG - 18, 4, 1, "Q")
     elif item == "fishtank":
-        c.rect(x - 2, y + 11, 20, 1, "K")                 # 小桌子
-        c.rect(x - 1, y + 12, 2, 6, "K"); c.rect(x + 15, y + 12, 2, 6, "K")
-        c.rect(x, y, 16, 11, "K")
-        c.rect(x + 1, y + 1, 14, 9, "J")
-        c.rect(x + 1, y + 1, 14, 2, "U")
-        c.rect(x + 1, y + 8, 14, 2, "A")
-        c.rect(x + 3, y + 5, 1, 3, "G"); c.rect(x + 12, y + 4, 1, 4, "G")
-        c.rect(x + 6, y + 4, 3, 2, "O"); c.px(x + 9, y + 4, "O"); c.px(x + 7, y + 4, "K")
+        c.rect(63, 49, 18, 2, "K")                      # 牆上的層板
+        c.rect(64, 49, 16, 1, (214, 160, 108))
+        c.rect(65, 40, 14, 9, "K")
+        c.rect(66, 41, 12, 7, (120, 200, 240))
+        c.rect(66, 41, 12, 2, (186, 228, 255))
+        c.rect(66, 46, 12, 2, (238, 204, 152))
+        c.rect(68, 43, 1, 3, "G"); c.rect(76, 42, 1, 4, "G")
+        c.rect(71, 43, 3, 2, "O"); c.px(74, 43, "O"); c.px(72, 43, "K")
     elif item == "yarn":
-        c.grid(x, y - 7, art.YARN[0])
+        c.grid(58, IG - 7, art.YARN[0])
+        c.rect(57, IG - 1, 2, 1, (226, 88, 140))
     elif item == "pumpkin":
-        c.grid(x, y - 8, art.PUMPKIN)
+        c.grid(29, IG - 8, art.PUMPKIN)
     elif item == "xmas_tree":
+        x = 30
         for i, w in enumerate((3, 5, 7, 9, 11, 13)):
-            c.rect(x + 7 - w // 2, y + 2 + i * 3, w, 3, "K")
-            c.rect(x + 8 - w // 2, y + 2 + i * 3, w - 2, 2, "G")
-        c.grid(x + 5, y - 3, ["..K..", ".KYK.", "KYYYK", ".KYK.", "..K.."])
-        for dx, dy, col in ((5, 8, "R"), (9, 11, "B"), (4, 14, "Y"), (10, 17, "R"), (6, 19, "B")):
-            c.px(x + dx, y + dy, col)
-        c.rect(x + 6, y + 20, 3, 3, "K"); c.px(x + 7, y + 21, "T")
+            c.rect(x + 7 - w // 2, IG - 23 + i * 3, w, 3, "K")
+            c.rect(x + 8 - w // 2, IG - 23 + i * 3, w - 2, 2, "G")
+            c.rect(x + 8 - w // 2, IG - 23 + i * 3, w - 2, 1, "j")
+        c.grid(x + 5, IG - 27, ["..K..", ".KYK.", "KYYYK", ".KYK.", "..K.."])
+        for dx, dy, col in ((5, -18, "R"), (9, -15, "B"), (4, -12, "Y"), (10, -9, "R"), (6, -7, "B")):
+            c.px(x + dx, IG + dy, col)
+        c.rect(x + 6, IG - 5, 3, 5, "K"); c.rect(x + 7, IG - 5, 1, 5, "T")
     elif item == "lantern":
-        c.rect(x + 2, y, 1, 4, "K")
-        c.grid(x, y + 4, art.LANTERN)
+        for x in (34, 72):
+            c.rect(x + 2, 27, 1, 3, "K")
+            c.grid(x, 30, art.LANTERN)
 
 
 def item_preview(item, unit=2):
-    """商店裡的擺設預覽圖。"""
-    sizes = {"rug": (30, 8, 0, 0), "plant": (10, 14, 0, 0), "lamp": (19, 29, 4, 0),
-             "painting": (14, 11, 0, 0), "scratcher": (12, 18, 0, 1), "fishtank": (20, 18, 2, 0),
-             "yarn": (8, 8, 0, 7), "cushion": (26, 9, 0, 0)}
-    w, h, ox, oy = sizes.get(item, (12, 12, 0, 0))
-    c = art.Canvas(w, h, unit)
-    _draw_item(c, item, ox, oy)
-    return c.pixmap()
+    """商店裡的擺設預覽圖（單獨把那一樣畫出來，裁掉空白）。"""
+    boxes = {"rug": (46, IG - 2, 24, 4), "plant": (53, 37, 8, 13), "lamp": (82, 39, 10, 28),
+             "painting": (65, 28, 15, 12), "scratcher": (46, IG - 19, 10, 20),
+             "fishtank": (62, 39, 20, 13), "yarn": (56, IG - 8, 10, 9), "cushion": (65, IG - 8, 24, 9)}
+    x, y, w, h = boxes.get(item, (0, 0, 12, 12))
+    c = _Canvas(IW, IH, unit)
+    draw_item(c, item)
+    pm = c.pixmap()
+    d = pm.devicePixelRatio()
+    out = pm.copy(int(x * unit * d), int(y * unit * d), int(w * unit * d), int(h * unit * d))
+    out.setDevicePixelRatio(d)
+    return out
 
 
-def room_background(owned, night, deco):
-    key = ("room", tuple(sorted(owned)), night, tuple(sorted(deco)))
+# ---------------- 整間屋子的剖面 ---------------- #
+def dollhouse(owned, night, deco, unit):
+    key = ("dollhouse", tuple(sorted(owned)), night, tuple(sorted(deco)), unit)
     if key in art._cache:
         return art._cache[key]
-    c = art.Canvas(RW, RH, RU)
-    # 牆：奶油色 + 粉紅直條紋
-    c.rect(0, 0, RW, FLOOR, (255, 240, 214) if not night else (226, 206, 190))
-    for x in range(3, RW, 8):
-        c.rect(x, 0, 2, FLOOR, (255, 222, 214) if not night else (210, 186, 182))
-    c.rect(0, FLOOR - 4, RW, 4, "K")                   # 踢腳板
-    c.rect(0, FLOOR - 3, RW, 2, (186, 136, 96))
-    # 地板：木頭
-    c.rect(0, FLOOR, RW, RH - FLOOR, (214, 166, 112) if not night else (176, 132, 96))
-    for y in range(FLOOR + 3, RH, 4):
-        c.rect(0, y, RW, 1, (186, 136, 90) if not night else (150, 110, 80))
-        for x in range((y * 7) % 13, RW, 23):
-            c.rect(x, y - 3, 1, 3, (186, 136, 90) if not night else (150, 110, 80))
-    # 窗戶（白天藍天、晚上星空和月亮）
-    wx, wy, ww, wh = 30, 7, 22, 18
-    c.rect(wx - 3, wy - 2, ww + 6, wh + 4, "K")
-    c.rect(wx - 2, wy - 1, ww + 4, wh + 2, "C")
-    sky_top, sky_bot = ((150, 210, 250), (214, 238, 255)) if not night else ((30, 36, 80), (64, 70, 130))
+    c = _Canvas(IW, IH, unit)
+
+    # 煙囪（畫在屋頂後面）
+    cx = CHIMNEY[0] - 3
+    c.rect(cx, 1, 7, 16, "K")
+    c.rect(cx + 1, 2, 5, 15, "B")
+    for y in range(4, 16, 3):
+        c.rect(cx + 1, y, 5, 1, "m")
+        c.px(cx + (2 if (y // 3) % 2 else 4), y + 1, "m")
+    c.rect(cx + 1, 2, 1, 14, "b")
+    c.rect(cx - 1, 0, 9, 3, "K")
+    c.rect(cx, 1, 7, 1, "c")
+
+    # 屋頂：外面一圈紅色瓦片，裡面是看得到樑的閣樓
+    for y in range(2, EAVE + 1):
+        half = _roof_half(y)
+        x0, x1 = 52 - half, 51 + half
+        c.rect(x0, y, x1 - x0 + 1, 1, "K")
+        c.rect(x0 + 1, y, x1 - x0 - 1, 1, "R")
+        row = y - 2
+        if row % 4 == 3:
+            c.rect(x0 + 1, y, x1 - x0 - 1, 1, "r")
+        if row % 4 == 1:
+            for x in range(x0 + 2 + (row // 4) % 2 * 2, x1 - 1, 4):
+                c.px(x, y, "h")
+        c.rect(x0 + 1, y, 2, 1, "h")
+    for y in range(8, EAVE):
+        half = _roof_half(y, apex=8) - 1
+        x0, x1 = 52 - half, 51 + half
+        if x1 <= x0:
+            continue
+        c.rect(x0, y, x1 - x0 + 1, 1, "K")
+        c.rect(x0 + 1, y, x1 - x0 - 1, 1, "attic")
+        c.px(x0 + 1, y, "attic_d"); c.px(x1 - 1, y, "attic_d")
+    c.rect(51, 9, 2, EAVE - 9, "beam")                    # 中柱
+    c.rect(51, 9, 1, EAVE - 9, (190, 140, 112))
+    c.rect(36, 17, 32, 2, "beam")                         # 橫樑
+    c.rect(36, 17, 32, 1, (190, 140, 112))
+    c.rect(37, 19, 30, 1, "attic_d")
+    # 閣樓裡的小東西：一盞小燈和一個毛線籃
+    c.rect(44, 19, 1, 2, "K")
+    c.rect(43, 21, 3, 2, (255, 226, 140) if night else (236, 200, 120))
+    c.rect(56, 21, 6, 3, "K"); c.rect(57, 21, 4, 2, (214, 168, 112)); c.px(58, 20, "P"); c.px(59, 20, "V")
+    # 屋簷 + 天花板的樑
+    c.rect(0, EAVE, IW, 2, "K")
+    c.rect(1, EAVE, IW - 2, 1, "e")
+    c.rect(ROOM_L - 4, EAVE + 2, ROOM_R - ROOM_L + 9, 3, "K")
+    c.rect(ROOM_L - 3, EAVE + 2, ROOM_R - ROOM_L + 7, 2, "wood")
+    c.rect(ROOM_L - 3, EAVE + 2, ROOM_R - ROOM_L + 7, 1, "wood_l")
+
+    # 後牆：壁紙（直條紋 + 小點點）、腰板（薄荷綠）、踢腳板
+    top = EAVE + 5
+    c.rect(ROOM_L, top, ROOM_R - ROOM_L + 1, IG - top, "wall")
+    for x in range(ROOM_L + 3, ROOM_R, 7):
+        c.rect(x, top, 2, 53 - top, "stripe")
+        for y in range(top + 2 + (x // 7) % 2 * 3, 53, 6):
+            c.px(x, y, "dot")
+    c.rect(ROOM_L, top, ROOM_R - ROOM_L + 1, 1, (236, 214, 196))   # 天花板下的陰影
+    c.rect(ROOM_L, 53, ROOM_R - ROOM_L + 1, 2, "wood_d")
+    c.rect(ROOM_L, 53, ROOM_R - ROOM_L + 1, 1, "wood_l")
+    c.rect(ROOM_L, 55, ROOM_R - ROOM_L + 1, IG - 58, "wain")
+    for x in range(ROOM_L + 2, ROOM_R, 5):
+        c.rect(x, 55, 1, IG - 58, "wain_d")
+        c.rect(x + 1, 55, 1, IG - 58, "wain_l")
+    c.rect(ROOM_L, IG - 3, ROOM_R - ROOM_L + 1, 1, "K")
+    c.rect(ROOM_L, IG - 2, ROOM_R - ROOM_L + 1, 2, "wood")
+    c.rect(ROOM_L, IG - 2, ROOM_R - ROOM_L + 1, 1, "wood_l")
+
+    # 窗戶：白天藍天白雲，晚上深藍夜空、月亮和星星
+    wx, wy, ww, wh = 37, 31, 22, 16
+    c.rect(wx - 2, wy - 2, ww + 4, wh + 4, "K")
+    c.rect(wx - 1, wy - 1, ww + 2, wh + 2, "Cr")
+    top_c, bot_c = ((150, 210, 250), (214, 238, 255)) if not night else ((22, 26, 62), (52, 58, 112))
     for i in range(wh):
         t = i / (wh - 1)
-        c.rect(wx, wy + i, ww, 1, tuple(int(a + (b - a) * t) for a, b in zip(sky_top, sky_bot)))
+        c.rect(wx, wy + i, ww, 1, tuple(int(a + (b - a) * t) for a, b in zip(top_c, bot_c)))
     if night:
-        c.rect(wx + 15, wy + 3, 4, 4, (255, 240, 180)); c.rect(wx + 16, wy + 3, 3, 3, (64, 70, 130))
-        c.rect(wx + 15, wy + 3, 2, 4, (255, 240, 180))
-        for sx, sy in ((wx + 3, wy + 4), (wx + 8, wy + 2), (wx + 6, wy + 10), (wx + 18, wy + 12)):
+        c.rect(wx + 15, wy + 2, 4, 4, (255, 240, 190))
+        c.rect(wx + 17, wy + 2, 2, 3, (22, 26, 62))
+        for sx, sy in ((wx + 3, wy + 3), (wx + 8, wy + 1), (wx + 6, wy + 9), (wx + 19, wy + 11), (wx + 12, wy + 6)):
             c.px(sx, sy, "W")
     else:
         c.rect(wx + 3, wy + 4, 6, 2, "W"); c.rect(wx + 4, wy + 3, 3, 1, "W")
-        c.rect(wx + 13, wy + 9, 5, 2, "W")
-    c.rect(wx + ww // 2, wy, 1, wh, "C"); c.rect(wx, wy + wh // 2, ww, 1, "C")
-    for side in (wx - 4, wx + ww + 1):                 # 窗簾
-        c.rect(side, wy - 3, 3, wh + 7, "K")
-        c.rect(side + 1, wy - 2, 1, wh + 5, "P")
-    c.rect(wx - 5, wy - 4, ww + 10, 2, "K")
-    c.rect(wx - 4, wy - 4, ww + 8, 1, "T")
-    if "snow" in deco:                                  # 窗外下雪
-        for sx, sy in ((wx + 2, wy + 13), (wx + 9, wy + 6), (wx + 14, wy + 14), (wx + 19, wy + 8)):
+        c.rect(wx + 13, wy + 10, 5, 2, "W"); c.rect(wx + 14, wy + 9, 2, 1, "W")
+    if "snow" in deco:
+        for sx, sy in ((wx + 2, wy + 12), (wx + 9, wy + 5), (wx + 15, wy + 13), (wx + 20, wy + 7), (wx + 5, wy + 8)):
             c.px(sx, sy, "W")
-    # 門（從裡面看，也有肉球）
-    c.rect(3, 13, 15, FLOOR - 13, "K")
-    c.rect(4, 14, 13, FLOOR - 14, "Z" if not night else (200, 80, 120))
-    for x in range(6, 17, 3):
-        c.rect(x, 15, 1, FLOOR - 16, (214, 98, 132))
-    c.grid(5, 19, art.DOOR_PAW)
-    c.rect(14, 28, 2, 2, "Y")
-    # 擺設：先畫地上的，再畫靠牆的
-    items = ["rug"] if "rug" in owned else []
-    items += ["painting", "scratcher", "plant", "lamp", "fishtank", "yarn"]
-    for it in items:
-        if it in owned and it in SPOTS and it != "rug":
-            _draw_item(c, it, *SPOTS[it], night=night)
-        elif it == "rug":
-            _draw_item(c, it, *SPOTS[it])
-    _draw_item(c, "cushion", *SPOTS["cushion"])
-    _draw_item(c, "bowl", *SPOTS["bowl"])
-    if "halloween" in deco:
-        _draw_item(c, "pumpkin", *SPOTS["pumpkin"])
+    c.rect(wx + ww // 2, wy, 1, wh, "Cr")
+    c.rect(wx, wy + wh // 2, ww, 1, "Cr")
+    c.rect(wx - 3, wy + wh + 1, ww + 6, 2, "K")           # 窗台
+    c.rect(wx - 2, wy + wh + 1, ww + 4, 1, "wood_l")
+    for side, flip in ((wx - 5, False), (wx + ww + 2, True)):   # 有皺褶的窗簾
+        c.rect(side, wy - 3, 4, wh + 6, "K")
+        c.rect(side + 1, wy - 2, 2, wh + 4, "P")
+        c.rect(side + (2 if not flip else 1), wy - 2, 1, wh + 4, (255, 180, 206))
+    c.rect(wx - 6, wy - 4, ww + 12, 2, "K")
+    c.rect(wx - 5, wy - 4, ww + 10, 1, "wood")
+
+    # 白天：從窗戶斜斜照進來的光
+    if not night:
+        for i in range(IG - (wy + wh + 3)):
+            y = wy + wh + 3 + i
+            c.rect(wx + 2 + i // 2, y, ww - 4, 1, QColor(255, 255, 230, 46))
+
+    # 室內的門（粉紅木門 + 精緻的貓掌）
+    dx, dy, dw, dh = DOOR
+    c.rect(dx - 2, dy - 2, dw + 4, dh + 2, "K")
+    c.rect(dx - 1, dy - 1, dw + 2, dh + 1, "Q")
+    c.rect(dx - 1, dy - 1, 1, dh + 1, "q")
+    c.rect(dx, dy, dw, dh, "Z")
+    for x in range(dx + 2, dx + dw, 3):
+        c.rect(x, dy + 1, 1, dh - 1, (232, 118, 148))
+    c.rect(dx, dy, dw, 1, (255, 170, 190))
+    c.grid(dx, dy + 3, PAW)
+    c.rect(dx + dw - 3, dy + 14, 2, 2, "K")
+    c.px(dx + dw - 3, dy + 14, "Y")
+
+    # 牆上的小時鐘
+    c.rect(81, 30, 7, 7, "K")
+    c.rect(82, 31, 5, 5, "Cr")
+    c.px(84, 32, "K"); c.px(84, 33, "K"); c.px(85, 33, "K")
+    c.px(82, 31, "K"); c.px(86, 31, "K"); c.px(82, 35, "K"); c.px(86, 35, "K")
+
+    # 天花板的吊燈（一直都在；晚上會亮）
+    c.rect(26, EAVE + 5, 1, 4, "K")
+    c.rect(24, EAVE + 9, 5, 2, "K")
+    c.rect(25, EAVE + 9, 3, 1, (255, 236, 170) if night else (236, 214, 170))
+    c.px(26, EAVE + 11, (255, 236, 170) if night else "K")
+
+    # 側牆的剖面（看得到牆的厚度）
+    for x0 in (ROOM_L - 4, ROOM_R + 1):
+        c.rect(x0, EAVE + 2, 4, IG - EAVE - 2, "K")
+        c.rect(x0 + 1, EAVE + 2, 2, IG - EAVE - 2, "T")
+        for y in range(EAVE + 5, IG, 4):
+            c.rect(x0 + 1, y, 2, 1, "t")
+
+    # 地板（木頭剖面）、地基、草地
+    c.rect(ROOM_L - 4, IG, ROOM_R - ROOM_L + 9, 4, "K")
+    c.rect(ROOM_L - 3, IG, ROOM_R - ROOM_L + 7, 3, "wood")
+    c.rect(ROOM_L - 3, IG, ROOM_R - ROOM_L + 7, 1, "wood_l")
+    for x in range(ROOM_L + 1, ROOM_R, 9):
+        c.px(x, IG + 1, "wood_d"); c.px(x, IG + 2, "wood_d")
+    c.rect(ROOM_L - 4, IG + 4, ROOM_R - ROOM_L + 9, 2, "stone")
+    for x in range(ROOM_L - 3, ROOM_R + 4, 5):
+        c.px(x, IG + 4, "stone_d")
+    c.rect(0, GRASS, IW, 4, "K")
+    c.rect(1, GRASS, IW - 2, 3, "G")
+    c.rect(1, GRASS + 2, IW - 2, 1, "g")
+    for x in range(2, IW - 2, 3):
+        c.px(x, GRASS, "j")
+
+    # 擺設
+    items = [i for i in ("painting", "fishtank", "plant", "scratcher", "lamp", "rug", "yarn") if i in owned]
+    for it in ("painting", "fishtank", "plant", "scratcher", "lamp"):
+        if it in items:
+            draw_item(c, it, night)
+    if "rug" in items:
+        draw_item(c, "rug")
     if "xmas" in deco:
-        _draw_item(c, "xmas_tree", *SPOTS["xmas_tree"])
+        draw_item(c, "xmas_tree")
+    draw_item(c, "bowl")
+    draw_item(c, "cushion")
+    if "yarn" in items:
+        draw_item(c, "yarn")
+    if "halloween" in deco:
+        draw_item(c, "pumpkin")
     if "lny" in deco:
-        _draw_item(c, "lantern", *SPOTS["lantern"])
-        _draw_item(c, "lantern", 70, 2)
-    if night:                                           # 晚上整個房間暗一點、偏藍
-        c.rect(0, 0, RW, RH, QColor(30, 30, 80, 46))
+        draw_item(c, "lantern")
+    if "xmas" in deco:
+        cols = [(232, 72, 72), (255, 214, 70), (90, 190, 90), (90, 150, 230)]
+        for i, x in enumerate(range(ROOM_L + 2, ROOM_R, 5)):
+            c.px(x, EAVE + 5, cols[i % 4])
+        c.grid(dx + 2, dy - 1, art.WREATH)
+
+    # 晚上：房間變暗偏藍，吊燈和立燈照出一圈一圈的暖光
+    if night:
+        room = (ROOM_L, ROOM_R, top, IG + 3)
+        c.rect(ROOM_L, top, ROOM_R - ROOM_L + 1, IG - top + 3, QColor(20, 24, 70, 120))
+        glow(c, 26, EAVE + 13, 15, clip=room)
         if "lamp" in owned:
-            lx, ly = SPOTS["lamp"]
-            c.rect(lx - 10, ly - 4, 30, 40, QColor(255, 210, 120, 40))
+            glow(c, 87, 47, 13, clip=room)
+            c.rect(84, 41, 6, 4, (255, 240, 190))
+        c.rect(25, EAVE + 9, 3, 2, (255, 244, 200))
+
+    # 兩側外面的花叢
+    c.grid(-4, GRASS - 8, BUSH)
+    c.grid(IW - 14, GRASS - 8, BUSH, flip=True)
+
     art._cache[key] = c.pixmap()
     return art._cache[key]
-
-
-class Room(QWidget):
-    """畫房間和在家的貓咪。"""
-
-    def __init__(self, ctrl):
-        super().__init__()
-        self.ctrl = ctrl
-        self.setFixedSize(RW * RU, RH * RU)
-        self.acts = {}       # cat -> dict(kind, x, dir, t)
-        self.timer = QTimer(self)
-        self.timer.setTimerType(Qt.CoarseTimer)
-        self.timer.timeout.connect(self._step)
-        self._n = 0
-
-    def start(self):
-        self.timer.start(FRAME_MS)
-        self._sync()
-
-    def stop(self):
-        self.timer.stop()
-
-    def _sync(self):
-        res = list(self.ctrl.house.residents)
-        for c in list(self.acts):
-            if c not in res:
-                self.acts.pop(c)
-        for c in res:
-            if c not in self.acts:
-                self.acts[c] = self._new_act(c)
-
-    def _new_act(self, cat):
-        owned = self.ctrl.progress.owned
-        taken = {a["kind"] for a in self.acts.values()}
-        kinds = ["sleep", "eat", "walk", "walk", "sit"]
-        if "yarn" in owned:
-            kinds.append("play")
-        if "scratcher" in owned:
-            kinds.append("scratch")
-        if self.ctrl.sleeping:
-            kinds = ["sleep"]
-        kinds = [k for k in kinds if k in ("walk", "sit") or k not in taken] or ["walk"]
-        k = random.choice(kinds)
-        x = {"sleep": SPOTS["cushion"][0] + 1, "eat": SPOTS["bowl"][0] + 9,
-             "play": SPOTS["yarn"][0] - 12, "scratch": SPOTS["scratcher"][0] + 9}.get(k, random.uniform(10, RW - 26))
-        return {"kind": k, "x": float(x), "dir": random.choice((1, 3)), "t": random.randint(25, 70),
-                "tx": random.uniform(8, RW - 26)}
-
-    def _step(self):
-        self._n += 1
-        self._sync()
-        for cat, a in self.acts.items():
-            a["t"] -= 1
-            if a["t"] <= 0:
-                self.acts[cat] = self._new_act(cat)
-                continue
-            if a["kind"] == "walk":
-                d = a["tx"] - a["x"]
-                if abs(d) < 1:
-                    a["tx"] = random.uniform(8, RW - 26)
-                else:
-                    a["x"] += max(-1.2, min(1.2, d))
-                    a["dir"] = 1 if d > 0 else 3
-        self.update()
-
-    def paintEvent(self, _e):
-        p = QPainter(self)
-        night = seasons.is_night()
-        deco = seasons.decorations() if self.ctrl.seasonal else set()
-        p.drawPixmap(0, 0, room_background(self.ctrl.progress.owned, night, deco))
-        # 貓咪：地板上（腳踩在 y=FLOOR+12 左右，愈下面的愈前面）
-        order = sorted(self.acts.items(), key=lambda kv: kv[1]["kind"] != "sleep")
-        for cat, a in order:
-            fr = sprites.cat_frames(cat.color, CAT_SCALE, cat.hat if self.ctrl.progress.has(cat.hat or "") else None,
-                                    cat.neck if self.ctrl.progress.has(cat.neck or "") else None)
-            k = a["kind"]
-            if k == "sleep":
-                pm = fr["sleep"][0][(self._n // 6) % 2]
-                feet = SPOTS["cushion"][1] + 4
-            elif k == "eat":
-                pm = fr["walk"][3][0 if (self._n // 2) % 2 else 2]
-                feet = FLOOR + 12
-            elif k == "walk":
-                pm = fr["walk"][a["dir"]][(self._n // 2) % 3]
-                feet = FLOOR + 14
-            elif k in ("play", "scratch"):
-                side = 1 if k == "play" else 3
-                pm = fr["expr"]["excited" if (self._n // 3) % 2 else "happy"][0 if side == 1 else 1]
-                feet = FLOOR + 13
-            else:
-                pm = fr["walk"][2][1]
-                feet = FLOOR + 10
-            ch = pm.height() / pm.devicePixelRatio()
-            y = feet * RU - (ch - sprites.FOOT_GAP * CAT_SCALE)
-            p.drawPixmap(int(a["x"] * RU), int(y), pm)
-            if k == "sleep" and (self._n // 6) % 2:
-                zz = sprites.effect("zzz", 2)
-                p.drawPixmap(int(a["x"] * RU + 50), int(y + 40), zz)
-        if not self.acts:
-            p.fillRect(QRect(0, 0, self.width(), self.height()), QColor(255, 255, 255, 60))
-
-
-def _Panel(ctrl, PixelButton):
-    from panels import U, PixelPanel
-
-    class Panel(PixelPanel):
-        def __init__(self):
-            super().__init__()
-            self.ctrl = ctrl
-            lay = QVBoxLayout(self)
-            lay.setContentsMargins(U * 2 + 8, U + 6, U * 2 + 8 + U, U * 2 + 10 + U)
-            lay.setSpacing(8)
-            self.title = QLabel()
-            lay.addWidget(self._title_bar(pixel.icon_pixmap("home", 2), self.title, self.close_room))
-            self.room = Room(ctrl)
-            frame = QWidget()
-            fl = QHBoxLayout(frame)
-            fl.setContentsMargins(0, 0, 0, 0)
-            fl.addWidget(self.room)
-            lay.addWidget(frame)
-            foot = QHBoxLayout()
-            self.status = QLabel()
-            self.status.setFont(pixel.font(12))
-            self.status.setStyleSheet("color: #7a6a58;")
-            foot.addWidget(self.status)
-            foot.addStretch()
-            self.call_btn = PixelButton()
-            self.call_btn.clicked.connect(self._call)
-            foot.addWidget(self.call_btn)
-            lay.addLayout(foot)
-
-        def open_near(self, house):
-            self.refresh()
-            self.adjustSize()
-            x = house.x() + house.width() + 6
-            y = house.y() + house.height() - self.height()
-            from PySide6.QtGui import QGuiApplication
-            g = (QGuiApplication.screenAt(house.geometry().center())
-                 or QGuiApplication.primaryScreen()).availableGeometry()
-            if x + self.width() > g.right():
-                x = house.x() - self.width() - 6
-            self.move(max(g.left(), x), max(g.top(), y))
-            self.show()
-            from macos import show_on_all_spaces
-            show_on_all_spaces(self)
-            self.raise_()
-            self.room.start()
-
-        def refresh(self):
-            n = len(self.ctrl.house.residents)
-            self.title.setText(tr("inside_title"))
-            self.status.setText(tr("inside_n", n=n) if n else tr("inside_empty"))
-            self.call_btn.setText(tr("come_out") if n else tr("go_home_all"))
-
-        def _call(self):
-            if self.ctrl.house.residents:
-                self.ctrl.come_out()
-            else:
-                self.ctrl.go_home_all()
-            from PySide6.QtCore import QTimer as _T
-            _T.singleShot(1500, self.refresh)
-
-        def close_room(self):
-            self.room.stop()
-            self.hide()
-
-        def hideEvent(self, e):
-            self.room.stop()
-            super().hideEvent(e)
-
-    return Panel()
-
-
-def make_panel(ctrl):
-    from panels import PixelButton
-    return _Panel(ctrl, PixelButton)

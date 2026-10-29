@@ -174,6 +174,8 @@ S = {
     "furniture_none":  {"en": "Buy furniture in the fish shop", "zh": "可以在小魚乾商店買家具"},
     "invite_cat":      {"en": "Call a cat over",        "zh": "叫一隻貓過來"},
     "look_inside":     {"en": "Look inside",            "zh": "進去看看"},
+    "look_outside":    {"en": "Back outside",           "zh": "回到外面看"},
+    "come_out_one":    {"en": "Come out of the house",  "zh": "從貓屋出來"},
     "inside_title":    {"en": "Inside the cat house",   "zh": "貓屋裡面"},
     "inside_n":        {"en": "{n} at home",            "zh": "{n} 隻貓在家"},
     "inside_empty":    {"en": "Nobody's home",          "zh": "現在沒有貓在家"},

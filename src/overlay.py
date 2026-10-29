@@ -12,7 +12,8 @@ import pixel
 import sprites
 from macos import show_on_all_spaces
 
-FX_INTERVAL = 140   # 特效動畫間隔（只在有特效時跑）
+FX_INTERVAL = 33    # 特效動畫間隔（只在有特效時跑；約 30fps 才順）
+FX_K = FX_INTERVAL / 140   # 以前 140ms 一步的速度
 U = 2               # 對話框的像素單位
 PAD = 9
 MAX_TEXT_W = 250
@@ -44,7 +45,7 @@ class Overlay(QWidget):
         self.text_timer.setSingleShot(True)
         self.text_timer.timeout.connect(self._clear_text)
         self.fx_timer = QTimer(self)
-        self.fx_timer.setTimerType(Qt.CoarseTimer)
+        self.fx_timer.setTimerType(Qt.PreciseTimer)
         self.fx_timer.setInterval(FX_INTERVAL)
         self.fx_timer.timeout.connect(self._step_effects)
 
@@ -92,10 +93,10 @@ class Overlay(QWidget):
     def _step_effects(self):
         alive = []
         for fx in self.effects:
-            fx[2] -= 6 if fx[0] == "heart" else 5
+            fx[2] -= (6 if fx[0] == "heart" else 5) * FX_K
             if fx[0] == "zzz":
-                fx[1] += 3
-            fx[3] -= 1
+                fx[1] += 3 * FX_K
+            fx[3] -= FX_K
             if fx[3] > 0:
                 alive.append(fx)
         self.effects = alive

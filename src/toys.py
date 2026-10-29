@@ -17,7 +17,7 @@ from macos import show_on_all_spaces
 
 U = 3
 TOY_U = 4
-TOY_MS = 33
+TOY_MS = 16
 TOY_LIFETIME = 90          # 玩具拿出來 90 秒後自動收起來
 
 
@@ -52,7 +52,7 @@ class Toy(QWidget):
         c = QCursor.pos()
         self.fx, self.fy = float(c.x()), float(c.y())
         self.timer = QTimer(self)
-        self.timer.setTimerType(Qt.CoarseTimer)
+        self.timer.setTimerType(Qt.PreciseTimer)
         self.timer.timeout.connect(self._step)
         self.timer.start(TOY_MS)
         self._step()
@@ -76,7 +76,7 @@ class Toy(QWidget):
             return
         self._t += 1
         if self.kind == "wand":
-            if self._t % 6 == 0:
+            if self._t % 12 == 0:
                 self.frame ^= 1
                 self.update()
             self.move(c.x() - 2, c.y() - 2)          # 棍子的尾巴就在游標上
@@ -86,10 +86,10 @@ class Toy(QWidget):
             r = screen.availableGeometry()
             tx = c.x() - self.width() / 2
             ty = r.bottom() + 1 - self.height()
-            dx = (tx - self.fx) * 0.08
-            self.fx += max(-14, min(14, dx))
+            dx = (tx - self.fx) * 0.04
+            self.fx += max(-7, min(7, dx))
             self.fy = ty
-            if abs(dx) > 0.5 and self._t % max(1, int(8 - min(7, abs(dx)))) == 0:
+            if abs(dx) > 0.25 and self._t % max(2, int(16 - min(14, abs(dx) * 2))) == 0:
                 self.frame ^= 1
                 self.update()
             self.move(int(self.fx), int(self.fy))

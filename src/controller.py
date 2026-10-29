@@ -287,7 +287,10 @@ class Controller(QObject):
         self._toy_menu(menu)
         menu.addSeparator()
         cat.add_own_menus(menu)
-        menu.item("home", tr("go_home"), lambda: self.send_home(cat))
+        if cat.indoor is not None or cat.activity == "home":
+            menu.item("paw", tr("come_out_one"), cat.leave_home)
+        else:
+            menu.item("home", tr("go_home"), lambda: self.send_home(cat))
         menu.addSeparator()
         menu.item(pixel.cat_head_icon("orange", plus=True), tr("add_cat"), lambda: self.add_cat(cat))
         if len(self.cats) > 1:
@@ -385,11 +388,8 @@ class Controller(QObject):
         self._namer.open_for(cat)
 
     def open_interior(self):
-        import interior
-        if self._inside is None:
-            self._inside = interior.make_panel(self)
         self.house.show_house()
-        self._inside.open_near(self.house)
+        self.house.set_view("inside")
 
     # ---------------- 藏起所有貓咪 ---------------- #
     def toggle_hidden(self):
@@ -432,7 +432,7 @@ class Controller(QObject):
         self.toy = Toy(kind, self._toy_done)
         for i, c in enumerate(self.cats):
             QTimer.singleShot(i * 200, lambda c=c: self.toy is not None and c in self.cats
-                              and c.play_with(self.toy))
+                              and c.indoor is None and c.play_with(self.toy))
 
     def stop_toy(self):
         if self.toy is not None:
@@ -457,7 +457,7 @@ class Controller(QObject):
 
     def _free_cats(self):
         return [c for c in self.cats if c.activity is None and c.mode in ("idle", "random")
-                and c.isVisible() and c.spot is None]
+                and c.isVisible() and c.spot is None and c.indoor is None]
 
     def invite_to(self, spot):
         if spot.occupant is not None:
@@ -809,15 +809,6 @@ class Controller(QObject):
                 for c in self.cats:  # 剛才在忙（跳躍、吃東西）的貓，忙完再去睡
                     if c.activity != "sleep":
                         c.sleep()
-
-        hovered = None
-        if not self.all_hidden:
-            for c in self.cats:
-                if c.isVisible() and c.geometry().contains(pos):
-                    hovered = c
-                    break
-        for c in self.cats:
-            c.overlay.set_tag(c.display_name() if c is hovered else None)
 
         if not self.pet_timer.isActive() and QGuiApplication.mouseButtons() == Qt.NoButton:
             for c in self.cats:
