@@ -1,6 +1,7 @@
 """產生 README 用的截圖（直接用程式裡的元件繪製，再合成到示意桌面上）。
 
 執行：QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 python3 tools/make_screenshots.py
+（選單很長，建議用大一點的虛擬螢幕：QT_QPA_PLATFORM="offscreen:configfile=screens.json"）
 輸出：docs/screenshots/*.png
 """
 import os
@@ -147,9 +148,9 @@ def save(img, name):
 
 def shot_menu(lang, name, sub_index=None):
     i18n.set_lang(lang)
-    img = desktop(560, 470, seed=3)
+    img = desktop(560, 540, seed=3)
     reset(cat, "orange", 1)
-    paste(img, cat.grab(), 60, 300)
+    paste(img, cat.grab(), 60, 370)
     menu = glassmenu.GlassMenu()
     ctrl.build_menu(cat, menu)
     menu.popup(QPoint(0, 0))
@@ -415,7 +416,7 @@ def shot_palette():
 def shot_tray():
     """選單列的選單（macOS 上是系統原生選單，這裡用同樣的內容示意）。"""
     i18n.set_lang("en")
-    img = desktop(680, 520, seed=29)
+    img = desktop(680, 600, seed=29)
     s = int(DPR)
     bar = Image.new("RGBA", (img.width, 26 * s), (246, 246, 248, 215))
     img.alpha_composite(bar, (0, 0))
@@ -433,7 +434,7 @@ def shot_tray():
     menu.popup(QPoint(0, 0))
     flush()
     glass_paste(img, to_pil(menu.grab()), 212, 30)
-    act = [a for a in menu.actions() if a.menu()][2]       # Mode for all cats
+    act = [a for a in menu.actions() if a.menu() and a.text() == i18n.tr("all_mode")][0]
     sub = act.menu()
     sub.popup(QPoint(0, 0))
     flush()
@@ -444,6 +445,181 @@ def shot_tray():
         ctrl.tray_menu = real
     save(img, "menubar.png")
 
+
+
+# ---------------- 新功能 ---------------- #
+import datetime as _dt  # noqa: E402
+
+import seasons  # noqa: E402
+
+
+def _freeze(date, hour=14):
+    seasons.now = lambda: _dt.datetime(date[0], date[1], date[2], hour, 0)
+
+
+def _unfreeze():
+    seasons.now = _dt.datetime.now
+
+
+def shot_shop():
+    i18n.set_lang("en")
+    _freeze((2026, 10, 29))
+    img = desktop(720, 560, seed=37)
+    pr = ctrl.progress
+    pr.coins = 42
+    pr.owned = {"collar", "box", "rug", "yarn"}
+    reset(cat, "orange", 1)
+    cat.set_hat("witch")
+    cat.set_neck("collar")
+    paste(img, cat.grab(), 40, 380)
+    ctrl.open_shop(cat)
+    flush()
+    paste(img, ctrl._shop.grab(), 250, 30)
+    ctrl._shop.hide()
+    cat.set_hat(None)
+    cat.set_neck(None)
+    save(img, "shop.png")
+    _unfreeze()
+
+
+def shot_stats():
+    import random as _r
+    i18n.set_lang("en")
+    img = desktop(720, 400, seed=41)
+    pr = ctrl.progress
+    rnd = _r.Random(3)
+    today = _dt.date.today()
+    pr.log = {}
+    for d in range(110):
+        day = today - _dt.timedelta(days=d)
+        if rnd.random() < (0.75 if d < 9 else 0.55):
+            n = rnd.randint(1, 5)
+            pr.log[day.isoformat()] = [n * 25, n]
+    ctrl.open_stats(cat)
+    flush()
+    reset(cat, "white", 1)
+    paste(img, cat.grab(), 30, 400 - cat.height() - 6 + 15)
+    paste(img, ctrl._stats.grab(), 180, 40)
+    ctrl._stats.hide()
+    save(img, "stats.png")
+
+
+def shot_inside():
+    i18n.set_lang("en")
+    _freeze((2026, 10, 29), 15)
+    img = desktop(820, 420, seed=43)
+    pr = ctrl.progress
+    pr.owned |= {"rug", "plant", "lamp", "painting", "scratcher", "fishtank", "yarn"}
+    house = ctrl.house
+    house.show()
+    others = []
+    looks = [("white", "party", None), ("black", None, "scarf"), ("brown", "beanie", None)]
+    for color, hat, neck in looks:
+        o = ctrl._spawn(ctrl.next_id, color)
+        ctrl.next_id += 1
+        o.hat, o.neck = hat, neck
+        pr.owned |= {x for x in (hat, neck) if x}
+        o.activity = "home"
+        house.residents.append(o)
+        house.state[o] = {"slot": "door", "mode": "sleep", "rise": 6}
+        others.append(o)
+    ctrl.open_interior()
+    room = ctrl._inside.room
+    room.timer.stop()
+    room._sync()
+    kinds = [("sleep", 71), ("play", 46), ("eat", 33)]
+    for o, (k, x) in zip(others, kinds):
+        room.acts[o] = {"kind": k, "x": float(x), "dir": 3, "t": 99, "tx": 40}
+    room._n = 6
+    ctrl._inside.refresh()
+    flush()
+    paste(img, house.grab(), 20, 420 - house.height() - 6)
+    paste(img, ctrl._inside.grab(), 300, 40)
+    ctrl._inside.hide()
+    house.hide()
+    for o in others:
+        house.residents.remove(o)
+        house.state.pop(o)
+        ctrl.cats.remove(o)
+        o.dispose()
+    save(img, "inside.png")
+    _unfreeze()
+
+
+def shot_seasons():
+    """同一間貓屋在不同時間：白天、晚上、萬聖節、聖誕節（下雪）、農曆新年。"""
+    i18n.set_lang("en")
+    house = ctrl.house
+    house.show()
+    W, H = 980, 300
+    img = desktop(W, H, seed=47)
+    shots = [((2026, 6, 10), 14), ((2026, 6, 10), 21), ((2026, 10, 29), 20), ((2026, 12, 20), 21),
+             ((2027, 2, 6), 15)]
+    for i, (date, hour) in enumerate(shots):
+        _freeze(date, hour)
+        house.update()
+        flush()
+        pm = house.grab()
+        paste(img, pm, 10 + i * 192, H - house.height() - 6)
+    _unfreeze()
+    house.hide()
+    save(img, "seasons.png")
+
+
+def shot_play():
+    """逗貓棒、紙箱、貓跳台、名牌、飾品。"""
+    i18n.set_lang("en")
+    from toys import Spot
+    W, H = 900, 380
+    img = desktop(W, H, seed=53)
+    foot = 5 * 3
+    ground = H - 6
+    box = Spot(ctrl, "box")
+    tree = Spot(ctrl, "tree")
+    flush()
+    # 紙箱裡有一隻三花
+    calico = ctrl.add_custom_color((245, 245, 245), (40, 140, 70), "", "calico")
+    helper = ctrl._spawn(ctrl.next_id, calico)
+    ctrl.next_id += 1
+    box.occupant = helper
+    paste(img, box.grab(), 40, ground - box.height())
+    # 貓跳台上坐著一隻戴皇冠的黑貓
+    paste(img, tree.grab(), 190, ground - tree.height())
+    reset(cat, "black", 2)
+    cat.hat = "crown"
+    ctrl.progress.owned.add("crown")
+    cat._build_frames()
+    reset(cat, "black", 2)
+    top = ground - tree.height() + 4 * 3
+    paste(img, cat.grab(), 190 + tree.width() / 2 - cat.width() / 2, top - (cat.height() - foot))
+    cat.hat = None
+    # 追逗貓棒的橘貓（撲過去）
+    from toys import Toy
+    reset(cat, "orange", 1)
+    cat.neck = "bowtie"
+    ctrl.progress.owned.add("bowtie")
+    cat._build_frames()
+    reset(cat, "orange", 1)
+    cat.frame = 0
+    paste(img, cat.grab(), 470, ground - cat.height() + foot - 40)
+    from art import WAND, pix
+    paste(img, pix(WAND[0], 3), 560, ground - 120)
+    cat.neck = None
+    cat._build_frames()
+    # 有名牌的白貓
+    reset(cat, "white", 3)
+    cat.name = "Mochi"
+    cat.overlay.tag = cat.display_name()
+    cat_with_overlay(img, cat, 720, ground - cat.height() + foot)
+    cat.overlay.tag = None
+    cat.name = ""
+    box.dispose()
+    tree.dispose()
+    ctrl.cats.remove(helper)
+    helper.dispose()
+    ctrl.delete_custom_color(calico)
+    reset(cat, "orange", 1)
+    save(img, "play.png")
 
 
 # ---------------- 動圖 ---------------- #
@@ -600,6 +776,11 @@ if __name__ == "__main__":
     shot_patterns()
     shot_palette()
     shot_tray()
+    shot_shop()
+    shot_stats()
+    shot_inside()
+    shot_seasons()
+    shot_play()
     gif_walk()
     gif_house()
     gif_pomodoro()
