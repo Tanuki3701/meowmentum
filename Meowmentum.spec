@@ -8,6 +8,7 @@ a = Analysis(
     pathex=["src"],
     datas=[("assets/sprites", "assets/sprites"), ("assets/fonts", "assets/fonts"),
            ("assets/tray.png", "assets")],
+    hiddenimports=["EventKit", "Foundation", "objc"],
     excludes=["tkinter", "unittest", "pydoc", "PySide6.QtQml",
               "PySide6.QtQuick", "PySide6.QtWebEngineCore", "PySide6.QtMultimedia"],
 )
@@ -32,5 +33,8 @@ app = BUNDLE(
         "CFBundleShortVersionString": VERSION["VERSION"],
         "CFBundleVersion": VERSION["VERSION"],
         "CFBundleDisplayName": "Meowmentum",
+        # 會議提醒（預設關閉）：打開時 macOS 會先問你要不要讓喵動力讀取行事曆
+        "NSCalendarsUsageDescription": "Meowmentum reads upcoming events so your cat can remind you before a meeting.",
+        "NSCalendarsFullAccessUsageDescription": "Meowmentum reads upcoming events so your cat can remind you before a meeting.",
     },
 )

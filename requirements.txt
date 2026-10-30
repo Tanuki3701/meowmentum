@@ -1,1 +1,2 @@
 PySide6-Essentials>=6.6
+pyobjc-framework-EventKit>=10; sys_platform == "darwin"
