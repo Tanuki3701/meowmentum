@@ -182,6 +182,163 @@ def expression(kind):
 
 EXPRESSIONS = ["happy", "excited", "yuck", "dizzy"]
 
+
+# ---------------- 新動作：坐著甩尾巴、伸懶腰、洗臉、打哈欠、麻糬睡、肚子朝上睡 ---------------- #
+def _side_head(eyes="open"):
+    """側面的頭（耳朵到下巴），回傳 {(x, y): 字元}；眼睛標成 E，換毛色時才會是眼睛的顏色。"""
+    side = read_orange(1, 1)
+    head = {}
+    for y in range(23, 35):
+        for x in range(17, 29):
+            ch = side.get(x, y)
+            if ch == "." or (y >= 31 and x < 21) or (y >= 33 and x < 22):
+                continue
+            head[(x, y)] = ch
+    head[(24, 29)] = head[(24, 30)] = "E"
+    if eyes == "closed":                       # 瞇眼：一條彎彎的線
+        head[(24, 29)] = "L"
+        head[(24, 30)] = "E"
+        head[(23, 30)] = "E"
+        head[(25, 30)] = "L"
+    return head
+
+
+def _blob(g, shapes, top_dark=True):
+    """把幾個橢圓聯集起來，畫成有輪廓和陰影的身體。shapes: [(cx, cy, rx, ry)]"""
+    inside = set()
+    for cx, cy, rx, ry in shapes:
+        for y in range(int(cy - ry) - 1, int(cy + ry) + 2):
+            for x in range(int(cx - rx) - 1, int(cx + rx) + 2):
+                if ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 <= 1.0 and y <= 42:
+                    inside.add((x, y))
+    ys = [y for _, y in inside]
+    mid = (min(ys) + max(ys)) / 2
+    for x, y in inside:
+        edge = any((x + dx, y + dy) not in inside for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+        if edge:
+            ch = "D" if (top_dark and y < mid - 1 and (x, y - 1) not in inside) else "O"
+        else:
+            near_bottom = (x, y + 2) not in inside or (x - 2, y) not in inside
+            ch = "M" if near_bottom else "L"
+        g.set(x, y, ch)
+    return inside
+
+
+def _paste(g, pixels, dx=0, dy=0):
+    for (x, y), ch in pixels.items():
+        g.set(x + dx, y + dy, ch)
+
+
+def _tail(g, pts, tip=None):
+    """一條兩格粗的尾巴：pts 是中心線（由身體往尾巴尖）。"""
+    for x, y in pts:
+        g.set(x, y, "M")
+        g.set(x, y + 1, "O")
+        if g.get(x, y - 1) == ".":
+            g.set(x, y - 1, "O")
+    for x, y in pts:
+        for dx, dy in ((-1, 0), (1, 0)):
+            if g.get(x + dx, y + dy) == ".":
+                g.set(x + dx, y + dy, "O")
+    if tip:
+        g.set(*tip, "D")
+
+
+def sit_frame(swish):
+    """坐著：身體直起來，前腳併攏，尾巴貼著地，尾巴尖甩一甩。"""
+    g = Grid(32, 48)
+    if swish == 0:
+        _tail(g, [(8, 41), (7, 41), (6, 41), (5, 41), (4, 41), (3, 40)], tip=(2, 40))
+    else:
+        _tail(g, [(8, 41), (7, 41), (6, 41), (5, 41), (4, 40), (3, 39)], tip=(3, 38))
+    _blob(g, [(13, 38, 6, 5), (17.5, 33.5, 5, 8)])
+    for x0 in (16, 19):                        # 前腳
+        for y in range(37, 42):
+            g.put(x0, y, "OMLO" if x0 == 16 else "OLMO")
+        g.put(x0, 42, "OOOO")
+    g.put(16, 36, "DMLLLLMD")
+    _paste(g, _side_head(), -3, 0)
+    return g
+
+
+def stretch_frame():
+    """伸懶腰：前腳往前伸、屁股翹起來。"""
+    g = Grid(32, 48)
+    _tail(g, [(8, 31), (7, 30), (6, 29), (5, 28), (5, 27)], tip=(5, 26))
+    _blob(g, [(11, 35, 4.5, 4.5), (16, 37.5, 6, 3.2)])
+    for x0 in (8, 11):                         # 後腳直直的
+        for y in range(37, 42):
+            g.put(x0, y, "OMLO")
+        g.put(x0, 42, "OOOO")
+    for y in range(40, 43):                    # 前腳往前伸，貼著地
+        g.put(17, y, "O" + "L" * 9 + "O")
+    g.put(17, 42, "OOOOOOOOOOO")
+    g.put(17, 39, "OOOOOOOOOOO")
+    _paste(g, _side_head(eyes="closed"), 2, 8)
+    return g
+
+
+def wash_frame(up):
+    """洗臉：坐著，舉起前腳舔一舔再擦臉。"""
+    g = sit_frame(0)
+    _paste(g, _side_head(eyes="closed"), -3, 0)
+    top = 29 if up else 31                     # 舉起來的前腳（彎彎的，肉球朝臉）
+    for y in range(top + 2, 37):
+        g.put(20, y, "OLLO")
+    g.put(21, top, "OO")
+    g.put(20, top + 1, "OLLO")
+    g.set(22, top + 1, "P")
+    if up:
+        g.set(23, 31, "P")                     # 粉紅的小舌頭
+    return g
+
+
+def yawn_frame():
+    """打哈欠：眼睛瞇起來，嘴巴張大。"""
+    g = sit_frame(0)
+    head = _side_head(eyes="closed")
+    _paste(g, head, -3, 0)
+    for (x, y), ch in {(21, 31): "O", (22, 31): "R", (23, 31): "R", (21, 32): "O", (22, 32): "P",
+                       (23, 32): "O", (22, 33): "O"}.items():
+        g.set(x, y, ch)
+    return g
+
+
+def loaf_frame(breath):
+    """麻糬睡：縮成圓圓的一顆，腳和尾巴都收起來。"""
+    g = Grid(32, 48)
+    b = breath
+    _blob(g, [(14, 38.5 - b * 0.3, 8.5, 4.6 + b * 0.3)])
+    _tail(g, [(7, 41), (9, 41), (11, 41), (13, 41)], tip=(14, 41))
+    head = _side_head(eyes="closed")
+    _paste(g, head, -2, 8)
+    return g
+
+
+def belly_frame(breath):
+    """肚子朝上睡：翻身露出肚子，四隻小腳縮在上面，肚子起伏。"""
+    g = Grid(32, 48)
+    b = breath
+    _tail(g, [(7, 41), (6, 41), (5, 41), (4, 40)], tip=(3, 40))
+    _blob(g, [(14, 39, 7.5, 3.4 + b * 0.4)], top_dark=False)
+    top = min(y for y in range(48) for x in range(32) if g.get(x, y) != ".")
+    for x in range(9, 20):                     # 淺色的肚子
+        for y in range(top + 1, top + 3):
+            if g.get(x, y) in ("M", "L"):
+                g.set(x, y, "L")
+    for x0, h in ((8, 2), (11, 3), (15, 3), (18, 2)):   # 縮起來的小腳
+        for k in range(h):
+            g.put(x0, top - 1 - k, "OLO")
+        g.put(x0, top - 1 - h, "OOO")
+    _paste(g, _side_head(eyes="closed"), -1, 9)
+    return g
+
+
+POSES = {"sit": [sit_frame(0), sit_frame(1)], "stretch": [stretch_frame()],
+         "wash": [wash_frame(True), wash_frame(False)], "yawn": [yawn_frame()],
+         "loaf": [loaf_frame(0), loaf_frame(1)], "belly": [belly_frame(0), belly_frame(1)]}
+POSE_ORDER = [(name, i) for name, frames in POSES.items() for i in range(len(frames))]
+
 # ---------------- 正面貓臉、探頭小臉、肉球 ---------------- #
 FACE = [
     "..OO........OO..",
@@ -676,6 +833,7 @@ def main():
     base_walk()
     save_semantic([sleep_frame(0), sleep_frame(1)], os.path.join(SPRITES, "base_sleep.png"))
     save_semantic([expression(k) for k in EXPRESSIONS], os.path.join(SPRITES, "base_expr.png"))
+    save_semantic([POSES[n][i] for n, i in POSE_ORDER], os.path.join(SPRITES, "base_pose.png"))
     face_sheet()
     effects_sheet()
     house()

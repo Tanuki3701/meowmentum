@@ -35,6 +35,8 @@ ms.flush = flush
 from PySide6.QtCore import QPoint  # noqa: E402
 
 import art  # noqa: E402
+time_mod = time
+_real_mono = time.monotonic
 import glassmenu  # noqa: E402
 import i18n  # noqa: E402
 import interior  # noqa: E402
@@ -243,7 +245,14 @@ def chip(img, text, x, y, anchor="tl", big=False, fill=(255, 250, 236), alpha=1.
     return w / S
 
 
-def menubar(img, battery=None, low_power=False, tray_hl=False):
+def tray_pil(season=None):
+    pm = pixel.tray_icon(season).pixmap(36, 36)
+    im = to_pil(pm).resize((18 * S, 18 * S), Image.NEAREST)
+    r, g, b, a = im.split()
+    return Image.merge("RGBA", (r.point(lambda v: 30), g.point(lambda v: 30), b.point(lambda v: 30), a))
+
+
+def menubar(img, battery=None, low_power=False, tray_hl=False, season="current"):
     """畫面最上方的選單列：小貓圖示（可以亮起來）、電池。"""
     W = img.width // S
     bar = Image.new("RGBA", (img.width, 26 * S), (246, 246, 248, 215))
@@ -253,9 +262,7 @@ def menubar(img, battery=None, low_power=False, tray_hl=False):
         hl = Image.new("RGBA", img.size, (0, 0, 0, 0))
         ImageDraw.Draw(hl).rounded_rectangle([(tx - 4) * S, 3 * S, (tx + 22) * S, 23 * S], 5 * S, fill=(0, 0, 0, 38))
         img.alpha_composite(hl)
-    tray = Image.open(os.path.join(ROOT, "assets", "tray.png")).convert("RGBA").resize((18 * S, 18 * S),
-                                                                                      Image.NEAREST)
-    img.alpha_composite(tray, (tx * S, 4 * S))
+    img.alpha_composite(tray_pil(seasons.season() if season == "current" else season), (tx * S, 4 * S))
     if battery is not None:
         level, charging = battery
         bx, by = W - 70, 8
@@ -324,6 +331,28 @@ CAP = {                                   # 只在動圖上用的說明文字
     "deco_lny": {"en": "Lunar New Year", "zh": "農曆新年"},
     "deco_spring": {"en": "Spring petals", "zh": "春天的花瓣"},
     "lowpower_on": {"en": "Low Power Mode is on", "zh": "低耗電模式開啟中"},
+    "season_spring": {"en": "Spring: cherry blossoms", "zh": "春天：櫻花"},
+    "season_summer": {"en": "Summer: sunflowers and a wind chime", "zh": "夏天：向日葵和風鈴"},
+    "season_autumn": {"en": "Autumn: maple leaves and Halloween", "zh": "秋天：楓葉和萬聖節"},
+    "season_winter": {"en": "Winter: snow, a snowman and Christmas", "zh": "冬天：積雪、雪人和聖誕節"},
+    "weather_rain": {"en": "Rain", "zh": "下雨"},
+    "weather_rain_in": {"en": "Rain on the window", "zh": "窗外在下雨"},
+    "weather_snow": {"en": "Snow", "zh": "下雪"},
+    "weather_storm": {"en": "Thunderstorm", "zh": "雷雨"},
+    "weather_fog": {"en": "Fog", "zh": "起霧"},
+    "act_sit": {"en": "Sit and swish the tail", "zh": "坐著甩尾巴"},
+    "act_wash": {"en": "Wash the face", "zh": "洗臉"},
+    "act_yawn": {"en": "Yawn", "zh": "打哈欠"},
+    "act_stretch": {"en": "Stretch", "zh": "伸懶腰"},
+    "act_chase": {"en": "Chase the tail", "zh": "追自己的尾巴"},
+    "act_sleep": {"en": "Sleep in three ways", "zh": "三種睡姿"},
+    "drag_home": {"en": "Drop on the house to go home", "zh": "放到貓屋上就回家"},
+    "drag_room": {"en": "Drop in the room to stay inside", "zh": "放進房間就住在裡面"},
+    "meeting_title": {"en": "Design review", "zh": "設計審查"},
+    "tray_spring": {"en": "Spring", "zh": "春天"},
+    "tray_summer": {"en": "Summer", "zh": "夏天"},
+    "tray_autumn": {"en": "Autumn", "zh": "秋天"},
+    "tray_winter": {"en": "Winter", "zh": "冬天"},
 }
 
 
@@ -776,27 +805,43 @@ def _room_cats(house, specs):
 
 
 def _draw_room_cats(img, house, ox, oy, cats_, t, fx):
+    """在房間（或閣樓）裡畫貓：ox, oy 是貓屋視窗的左上角。"""
+    if not cats_:
+        return
     U = house.U
-    floor = oy + (18 + interior.IG) * U - (CH - FOOT)
+    floor = oy + (18 + house.R["floor"]) * U - (CH - FOOT)
     for c in cats_:
-        x = ox + (8 + c["x"]) * U - CW / 2
-        if c["kind"] == "sleep":
-            if (t + c["t0"]) % 9 == 0:
-                fx.add("zzz", x + CW / 2 + 20, floor + 29 * SC - 6)
-            put(img, frames_of(c["color"], c["hat"], c["neck"])["sleep"][0][((t + c["t0"]) // 8) % 2], x, floor)
-        elif c["kind"] == "walk":
+        fr = frames_of(c["color"], c["hat"], c["neck"])
+        x = ox + (house.OX + c["x"]) * U - CW / 2
+        side = c.get("side", 0)
+        k = c["kind"]
+        tt = t + c["t0"]
+        if k in ("sleep", "loaf", "belly"):
+            if tt % 9 == 0:
+                fx.add("zzz", x + CW / 2 + (20 if side == 0 else -20), floor + 29 * SC - 6)
+            pm = fr["sleep"][side][(tt // 8) % 2] if k == "sleep" else fr["pose"][k][side][(tt // 8) % 2]
+            put(img, pm, x, floor)
+        elif k == "walk":
             lo, hi = c.get("lo", 26), c.get("hi", 60)
             span = (hi - lo) * 2
             ph = (t * 1.3 + c["t0"] * 4) % span
             ax, d = (lo + ph, 1) if ph < hi - lo else (hi - (ph - (hi - lo)), 3)
-            x = ox + (8 + ax) * U - CW / 2
-            put(img, frames_of(c["color"], c["hat"], c["neck"])["walk"][d][((t + c["t0"]) // 2) % 3], x, floor)
-        elif c["kind"] == "eat":
-            pm = frames_of(c["color"], c["hat"], c["neck"])["expr"]["happy"][1] if (t // 6) % 2 else \
-                frames_of(c["color"], c["hat"], c["neck"])["walk"][3][1]
+            x = ox + (house.OX + ax) * U - CW / 2
+            put(img, fr["walk"][d][(tt // 2) % 3], x, floor)
+        elif k == "eat":
+            pm = fr["expr"]["happy"][1] if (t // 6) % 2 else fr["walk"][3][1]
             put(img, pm, x, floor)
+        elif k == "sit":
+            put(img, fr["pose"]["sit"][side][1 if tt % 10 in (3, 4) else 0], x, floor)
+        elif k == "wash":
+            put(img, fr["pose"]["wash"][side][(tt // 3) % 2], x, floor)
+        elif k == "happy":
+            put(img, fr["expr"]["happy"][side], x, floor)
+        elif k == "play":
+            jump = -abs(math.sin(tt / 3)) * 14
+            put(img, fr["expr"]["excited"][side], x, floor + jump)
         else:
-            put(img, frames_of(c["color"], c["hat"], c["neck"])["walk"][2][1], x, floor)
+            put(img, fr["walk"][2][1], x, floor)
 
 
 @gif("inside")
@@ -808,8 +853,9 @@ def g_inside(lang):
     pr = ctrl.progress
     pr.owned |= {"rug", "plant", "lamp", "painting", "fishtank", "yarn"}
     house = _prep_house("outside")
-    hx_out, hy_out = (W - house.width()) // 2, H - house.height() - 6
-    anchor_x = hx_out + house.width() / 2
+    art_w = (house.OX + house.V["w"] / 2) * house.U          # 從視窗左邊到房子中心
+    anchor_x = W / 2
+    hx_out, hy_out = anchor_x - art_w, H - house.height() - 6
     frames = []
     fx = Fx()
     cats_ = _room_cats(house, [("orange", "beanie", None, 0, "walk"), ("black", None, "scarf", 57, "eat"),
@@ -829,7 +875,7 @@ def g_inside(lang):
         if t == 16:
             house.set_view("inside", animate=False)
             house.setWindowOpacity(1.0)
-        hx, hy = anchor_x - house.width() / 2, H - house.height() - 6
+        hx, hy = anchor_x - (house.OX + house.V["w"] / 2) * house.U, H - house.height() - 6
         a = min(1.0, (t - 16) / 4)
         layer = base.copy()
         paste(layer, _house_frame(house), hx, hy)
@@ -902,13 +948,14 @@ def g_daynight(lang):
 
 @gif("seasons", multi=True)
 def g_seasons(lang):
-    W, H = 560, 320
+    W, H = 600, 320
     base = desktop(W, H, seed=47)
     house = _prep_house("outside")
     ctrl.seasonal = True
     frames = []
-    shots = [((2026, 10, 29), 20, "deco_halloween"), ((2026, 12, 20), 21, "deco_xmas"),
-             ((2027, 2, 6), 15, "deco_lny"), ((2026, 4, 2), 13, "deco_spring")]
+    shots = [((2026, 4, 2), 13, "season_spring"), ((2026, 7, 20), 15, "season_summer"),
+             ((2026, 10, 29), 17, "season_autumn"), ((2026, 12, 20), 21, "season_winter"),
+             ((2027, 2, 6), 15, "deco_lny")]
     hx = (W - house.width()) // 2
     for date, hour, key in shots:
         ms._freeze(date, hour)
@@ -962,6 +1009,8 @@ def g_palette(lang):
         (lambda: pal.rows["eye"]["btns"][3], lambda: pal._pick_eye((80, 150, 230))),
         (lambda: pal.odd_btn, lambda: pal._toggle_odd()),
         (lambda: pal.rows["eye2"]["btns"][2], lambda: pal._pick("eye2", pal.EYES[2])),
+        (lambda: pal.detail_btns["ears"], lambda: pal._toggle_detail("ears")),
+        (lambda: pal.detail_btns["tail"], lambda: pal._toggle_detail("tail")),
     ]
     pal._refresh()
     flush()
@@ -994,7 +1043,7 @@ def g_palette(lang):
 
 @gif("patterns", multi=True)
 def g_patterns(lang):
-    W, H = 780, 230
+    W, H = 900, 400
     base = desktop(W, H, seed=31)
     looks = [
         (dict(fur=(245, 245, 245), eye=(40, 140, 70), pattern="calico"), ["pat_calico"]),
@@ -1005,6 +1054,10 @@ def g_patterns(lang):
         (dict(fur=(245, 245, 245), eye=(80, 150, 230), pattern="calico", stripes=(120, 90, 70)),
          ["pat_calico", "pat_stripes"]),
         (dict(fur=(245, 245, 245), eye=(80, 150, 230), eye2=(230, 190, 60)), ["odd_eyes"]),
+        (dict(fur=(240, 228, 206), eye=(80, 150, 230), points=(92, 64, 52)), ["detail_points"]),
+        (dict(fur=(236, 170, 80), eye=(60, 160, 80), gradient=(150, 80, 40)), ["detail_gradient"]),
+        (dict(fur=(245, 245, 245), eye=(230, 190, 60), ears=(222, 130, 60), tail=(222, 130, 60)),
+         ["detail_ears", "detail_tail"]),
     ]
     ids = []
     for lk, _ in looks:
@@ -1012,18 +1065,21 @@ def g_patterns(lang):
         fur, eye = lk.pop("fur"), lk.pop("eye")
         ids.append(ctrl.add_custom_color(fur, eye, "", **lk))
     frames = []
-    gap = W / len(ids)
+    per = 5
+    gap = W / per
     for t in range(24):
         img = base.copy()
         for i, cid in enumerate(ids):
+            row, col = divmod(i, per)
             d = [1, 2, 3, 2][(t // 6 + i) % 4]
             pm = walk_pm(cid, d, t + i) if d != 2 else stand_pm(cid, 2)
-            x = gap * i + gap / 2 - CW / 2
-            put(img, pm, x, H - 40 - CH + FOOT)
+            x = gap * col + gap / 2 - CW / 2
+            yb = (H / 2) * (row + 1)
+            put(img, pm, x, yb - 40 - CH + FOOT)
             label = " + ".join(tr(k) for k in looks[i][1])
             d_ = ImageDraw.Draw(img)
             tw = d_.textlength(label, font=FONT) / S
-            d_.text(((gap * i + gap / 2 - tw / 2) * S, (H - 30) * S), label, font=FONT, fill=INK)
+            d_.text(((gap * col + gap / 2 - tw / 2) * S, (yb - 30) * S), label, font=FONT, fill=INK)
         frames.append(img)
     for cid in ids:
         ctrl.delete_custom_color(cid)
@@ -1304,20 +1360,26 @@ def g_custom_time(lang):
     pk._set(25)
     flush()
     px, py = 240, 40
-    plus = [b for b in pk.findChildren(type(ctrl.palette.save_btn)) if b._icon is not None][1]
+    icons = [b for b in pk.findChildren(type(ctrl.palette.save_btn)) if b._icon is not None]
+    icons = [b for b in icons if b.mapTo(pk, QPoint(0, 0)).y() > 40]       # 不要標題列的關閉鈕
+    row_y = min(b.mapTo(pk, QPoint(0, 0)).y() for b in icons)
+    pm_buttons = sorted([b for b in icons if abs(b.mapTo(pk, QPoint(0, 0)).y() - row_y) < 6],
+                        key=lambda b: b.mapTo(pk, QPoint(0, 0)).x())
+    plus = pm_buttons[-1]
     bx, by = _child_center(pk, plus)
     frames = []
-    for t in range(40):
-        if 8 <= t < 30:
-            pk._bump(2 if t < 28 else 1)
+    for t in range(44):
+        clicking = 10 <= t < 34
+        if clicking and t % 2 == 0:
+            pk._bump(3 if t < 30 else 1)              # 每點一下加號，數字就變大
         flush()
         img = base.copy()
         m = pk._minutes()
         put(img, stand_pm("orange", 1), 50, g)
         bubble(img, 50 + CW / 2, g, label=(pixel.tomato(0.05, 2), "%02d:00" % m))
         paste(img, pk.grab(), px, py)
-        k = ease(min(1, t / 7))
-        cursor(img, lerp(600, px + bx, k), lerp(340, py + by, k), click=(t % 2) * 0.5 if 8 <= t < 30 else 0)
+        k = ease(min(1, t / 9))
+        cursor(img, lerp(600, px + bx - 3, k), lerp(340, py + by - 2, k), click=0.35 if clicking and t % 2 == 0 else 0)
         frames.append(img)
     pk.hide()
     save_gif(frames, out_name("custom-time", lang, True), 110)
@@ -1444,6 +1506,14 @@ def g_menubar(lang):
     mw = menu.width()
     menu.hide()
     mx = min(tx - 4, W - mw - 160)
+    for sea in ("spring", "summer", "autumn", "winter"):        # 選單列的小貓跟著季節換裝
+        big = tray_pil(sea).resize((72 * S, 72 * S), Image.NEAREST)
+        for t in range(7):
+            img = base.copy()
+            menubar(img, season=sea)
+            img.alpha_composite(big, (int((tx - 27) * S), 44 * S))
+            chip(img, cap("tray_" + sea), tx + 9, 124, anchor="tc", big=True)
+            frames.append(img)
     for t in range(10):
         img = base.copy()
         menubar(img)
@@ -1765,6 +1835,553 @@ def g_language(lang):
             frames.append(img)
     i18n.set_lang("en")
     save_gif(frames, out_name("language", lang, False), 110)
+
+
+# =====================================================================
+# 新功能
+# =====================================================================
+def _house_menu_img(house):
+    menu, mimg = grab_menu(lambda m: house.fill_menu(m))
+    acts = [a for a in menu.actions() if not a.isSeparator()]
+    return menu, mimg, acts
+
+
+@gif("attic", multi=True)
+def g_attic(lang):
+    """右鍵「上閣樓看看」：切換到閣樓，貓咪在大床、暖桌和壁爐旁邊。"""
+    ms._freeze((2026, 11, 20), 18)
+    W, H = 640, 420
+    base = desktop(W, H, seed=139)
+    pr = ctrl.progress
+    pr.owned |= {"kotatsu", "fireplace", "bookshelf", "rug", "plant", "lamp", "painting", "fishtank"}
+    house = _prep_house("inside")
+    hx, hy = (W - house.width()) // 2, H - house.height() - 6
+    house.move(int(hx), int(hy))
+    frames = []
+    fx = Fx()
+    menu, mimg, acts = _house_menu_img(house)
+    i = next(k for k, a in enumerate(acts) if a.text() == tr("go_attic"))
+    menu.hide()
+    menu, mimg = grab_menu(lambda m: house.fill_menu(m), active=i)
+    geo = menu.actionGeometry([a for a in menu.actions() if not a.isSeparator()][i])
+    menu.hide()
+    room = _room_cats(house, [("white", None, None, 30, "walk"), ("black", None, "scarf", 76, "sleep")])
+    for t in range(18):
+        img = base.copy()
+        paste(img, _house_frame(house), hx, hy)
+        _draw_room_cats(img, house, hx, hy, room, t, fx)
+        if t >= 6:
+            glass_paste(img, mimg, hx + house.width() * 0.55, hy - 40 if hy > 60 else 20)
+            cursor(img, hx + house.width() * 0.55 + 70, (hy - 40 if hy > 60 else 20) + geo.center().y())
+        else:
+            cursor(img, lerp(600, hx + house.width() * 0.55, t / 6), lerp(60, hy + 80, t / 6), click=0.4 if t == 5 else 0)
+        fx.step()
+        fx.draw(img)
+        frames.append(img)
+    house.set_view("attic", animate=False)
+    house.setWindowOpacity(1.0)
+    ax, ay = (W - house.width()) // 2, H - house.height() - 6
+    house.move(int(ax), int(ay))
+    cats_ = _room_cats(house, [("white", None, None, 38, "belly"), ("black", None, "scarf", 56, "loaf"),
+                               ("orange", "beanie", None, 86, "play")])
+    cats_[2]["side"] = 1
+    for t in range(64):
+        if t % 10 == 0:
+            house._puff()
+        img = base.copy()
+        layer = base.copy()
+        paste(layer, _house_frame(house), ax, ay)
+        _draw_room_cats(layer, house, ax, ay, cats_, t, fx)
+        fx.step()
+        fx.draw(layer)
+        a = min(1.0, (t + 1) / 4)
+        img = Image.blend(base, layer, a) if a < 1 else layer
+        frames.append(img)
+    house.anim.stop()
+    house.smoke.clear()
+    house.set_view("outside", animate=False)
+    house.hide()
+    ms._unfreeze()
+    save_gif(frames, out_name("attic", lang, True), 100)
+
+
+@gif("weather", multi=True)
+def g_weather(lang):
+    """天氣：外面下雨、窗外的雨、下雪、雷雨、起霧。"""
+    W, H = 640, 400
+    base = desktop(W, H, seed=149)
+    pr = ctrl.progress
+    pr.owned |= {"rug", "plant", "lamp", "painting", "fishtank", "kotatsu", "fireplace"}
+    house = ctrl.house
+    house.show()
+    frames = []
+    fx = Fx()
+    plan = [("rain", "outside", (2026, 6, 10), 15, "weather_rain"),
+            ("rain", "inside", (2026, 6, 10), 15, "weather_rain_in"),
+            ("snow", "outside", (2027, 1, 12), 10, "weather_snow"),
+            ("snow", "attic", (2027, 1, 12), 20, "weather_snow"),
+            ("storm", "inside", (2026, 8, 2), 21, "weather_storm"),
+            ("fog", "outside", (2026, 11, 5), 8, "weather_fog")]
+    for kind, view, date, hour, key in plan:
+        ms._freeze(date, hour)
+        ctrl.weather.set_kind(kind)
+        house.set_view(view, animate=False)
+        house.setWindowOpacity(1.0)
+        house._flash_at = time.monotonic() + 0.9
+        hx, hy = (W - house.width()) // 2, H - house.height() - 6
+        house.move(int(hx), int(hy))
+        cats_ = []
+        if view == "inside":
+            cats_ = _room_cats(house, [("orange", None, None, 48, "sit"), ("white", None, None, 76, "sleep")])
+        elif view == "attic":
+            cats_ = _room_cats(house, [("black", None, "scarf", 56, "loaf"), ("white", None, None, 74, "sit")])
+        t0 = time.monotonic()
+        for t in range(20):
+            ms_t = t0 + t * 0.12
+            time_mod.monotonic = lambda v=ms_t: v
+            img = base.copy()
+            paste(img, _house_frame(house), hx, hy)
+            _draw_room_cats(img, house, hx, hy, cats_, t, fx)
+            fx.step()
+            fx.draw(img)
+            chip(img, cap(key), 16, 14, big=True)
+            frames.append(img)
+        time_mod.monotonic = _real_mono
+    ctrl.weather.set_kind(None)
+    ms._unfreeze()
+    house.set_view("outside", animate=False)
+    house.hide()
+    save_gif(frames, out_name("weather", lang, True), 110)
+
+
+@gif("actions", multi=True)
+def g_actions(lang):
+    """小動作：坐著甩尾巴、洗臉、打哈欠、伸懶腰、追尾巴，還有三種睡姿。"""
+    W, H = 600, 240
+    base = desktop(W, H, seed=151)
+    g = ground_y(H)
+    cid = ctrl.add_custom_color((240, 228, 206), (80, 150, 230), "", points=(92, 64, 52))
+    frames = []
+    fx = Fx()
+    cx = W / 2 - CW / 2
+    for key in ("act_sit", "act_wash", "act_yawn", "act_stretch", "act_chase", "act_sleep"):
+        for t in range(18):
+            img = base.copy()
+            if key == "act_sit":
+                pm = frames_of("orange")["pose"]["sit"][0][1 if t % 6 in (2, 3) else 0]
+                put(img, frames_of(cid)["pose"]["sit"][1][1 if (t + 3) % 6 in (2, 3) else 0], cx + 90, g)
+            elif key == "act_wash":
+                pm = frames_of("orange")["pose"]["wash"][0][(t // 2) % 2]
+            elif key == "act_yawn":
+                pm = frames_of("orange")["pose"]["yawn"][0][0] if 4 <= t < 14 else frames_of("orange")["pose"]["sit"][0][0]
+            elif key == "act_stretch":
+                pm = frames_of("orange")["pose"]["stretch"][0][0] if 3 <= t < 15 else stand_pm("orange", 1)
+            elif key == "act_chase":
+                pm = frames_of("orange")["walk"][(DOWN_SEQ[t % 4])][1]
+                if t % 6 == 0:
+                    fx.burst("sparkle", cx + CW / 2, g + 22 * SC, 1)
+            else:
+                pm = None
+                for i, (style, col) in enumerate((("sleep", "orange"), ("loaf", "black"), ("belly", cid))):
+                    fr = frames_of(col)
+                    pmi = fr["sleep"][0][(t // 6) % 2] if style == "sleep" else fr["pose"][style][0][(t // 6) % 2]
+                    put(img, pmi, 70 + i * 160, g)
+                    if t % 9 == i * 3:
+                        fx.add("zzz", 70 + i * 160 + CW / 2 + 20, g + 29 * SC - 6)
+            if pm is not None:
+                put(img, pm, cx, g)
+            fx.step()
+            fx.draw(img)
+            chip(img, cap(key), 16, 14, big=True)
+            frames.append(img)
+    ctrl.delete_custom_color(cid)
+    save_gif(frames, out_name("actions", lang, True), 120)
+
+
+DOWN_SEQ = [2, 1, 0, 3]
+
+
+@gif("cozy", multi=True)
+def g_cozy(lang):
+    """房間裡的貓咪互相理毛，然後擠在軟墊上一起睡。"""
+    ms._freeze((2026, 6, 10), 20)
+    W, H = 560, 340
+    base = desktop(W, H, seed=157)
+    pr = ctrl.progress
+    pr.owned |= {"rug", "plant", "lamp", "painting", "fishtank"}
+    house = _prep_house("inside")
+    hx, hy = (W - house.width()) // 2, H - house.height() - 6
+    house.move(int(hx), int(hy))
+    frames = []
+    fx = Fx()
+    for t in range(70):
+        img = base.copy()
+        lift = 0
+        paste(img, _house_frame(house), hx, hy)
+        if t < 34:                                       # 理毛
+            cats_ = _room_cats(house, [("white", None, None, 44, "happy"), ("orange", None, "bowtie", 62, "sit")])
+            cats_[1]["side"] = 1
+            _draw_room_cats(img, house, hx, hy, cats_, t, fx)
+            if t % 8 == 2:
+                fx.burst("heart", hx + (house.OX + 54) * house.U, hy + (18 + interior.IG - 22) * house.U, 2)
+            if t > 10:
+                lift = bubble(img, hx + (house.OX + 62) * house.U, house.indoor_floor_y(cat) - house.y() + hy,
+                              tr("say_groom")[1])
+        else:                                            # 擠在軟墊上一起睡
+            cats_ = _room_cats(house, [("white", None, None, 70, "sleep"), ("orange", None, "bowtie", 82, "loaf")])
+            cats_[1]["side"] = 1
+            _draw_room_cats(img, house, hx, hy, cats_, t, fx)
+        fx.step()
+        fx.draw(img, lift=lift)
+        frames.append(img)
+    house.hide()
+    ms._unfreeze()
+    save_gif(frames, out_name("cozy", lang, True), 100)
+
+
+@gif("drag", multi=True)
+def g_drag(lang):
+    """用滑鼠把貓咪抓到貓屋上放開就會回家；看裡面時放進房間就住在裡面。"""
+    ms._freeze((2026, 6, 10), 14)
+    W, H = 640, 360
+    base = desktop(W, H, seed=163)
+    house = _prep_house("outside")
+    hx, hy = W - house.width() - 30, H - house.height() - 6
+    house.move(int(hx), int(hy))
+    g = ground_y(H)
+    frames = []
+    start = (60, g)
+    door = (hx + (house.OX + 28) * house.U - CW / 2, hy + (18 + 30) * house.U - CH / 2)
+    for t in range(40):
+        img = base.copy()
+        if 22 <= t < 30:
+            house._door_until = time.monotonic() + 1
+        paste(img, _house_frame(house), hx, hy)
+        if t < 6:
+            put(img, stand_pm("white", 1), *start)
+            cursor(img, lerp(300, start[0] + CW / 2, t / 5), lerp(80, start[1] + 30 * SC, t / 5))
+        elif t < 20:
+            k = ease((t - 6) / 13)
+            x, y = lerp(start[0], door[0], k), lerp(start[1], door[1], k) - math.sin(k * math.pi) * 40
+            put(img, stand_pm("white", 2), x, y)
+            cursor(img, x + CW / 2, y + 30 * SC)
+        elif t < 26:
+            put(img, frames_of("white")["walk"][0][1], door[0], hy + (18 + sprites.HOUSE_GROUND) * house.U - (CH - FOOT),
+                1 - (t - 20) / 6)
+            cursor(img, door[0] + CW / 2, door[1] + 30 * SC)
+        else:
+            cursor(img, door[0] + CW / 2, door[1] + 30 * SC)
+        chip(img, cap("drag_home"), 16, 14, big=True)
+        frames.append(img)
+    # 看裡面：拖進房間
+    house.set_view("inside", animate=False)
+    house.setWindowOpacity(1.0)
+    hx2, hy2 = W - house.width() - 20, H - house.height() - 6
+    house.move(int(hx2), int(hy2))
+    floor = hy2 + (18 + interior.IG) * house.U - (CH - FOOT)
+    target = (hx2 + (house.OX + 50) * house.U - CW / 2, floor)
+    start = (40, g)
+    fx = Fx()
+    for t in range(40):
+        img = base.copy()
+        paste(img, _house_frame(house), hx2, hy2)
+        if t < 6:
+            put(img, stand_pm("black", 1), *start)
+            cursor(img, lerp(300, start[0] + CW / 2, t / 5), lerp(80, start[1] + 30 * SC, t / 5))
+        elif t < 20:
+            k = ease((t - 6) / 13)
+            x, y = lerp(start[0], target[0], k), lerp(start[1], target[1] - 30, k) - math.sin(k * math.pi) * 50
+            put(img, stand_pm("black", 2), x, y)
+            cursor(img, x + CW / 2, y + 30 * SC)
+        else:
+            if t == 20:
+                fx.burst("heart", target[0] + CW / 2, target[1] + 22 * SC, 2)
+            put(img, frames_of("black")["pose"]["sit"][0][1 if t % 6 in (2, 3) else 0], *target)
+            cursor(img, target[0] + CW / 2 + 40, target[1])
+        fx.step()
+        fx.draw(img)
+        chip(img, cap("drag_room"), 16, 14, big=True)
+        frames.append(img)
+    house.set_view("outside", animate=False)
+    house.hide()
+    ms._unfreeze()
+    save_gif(frames, out_name("drag", lang, True), 100)
+
+
+@gif("furnshop", multi=True)
+def g_furnshop(lang):
+    """家具店：在貓屋上按右鍵打開，買一張暖桌，閣樓裡就多了暖桌。"""
+    PURGE["on"] = True
+    ms._freeze((2026, 11, 20), 15)
+    W, H = 860, 600
+    base = desktop(W, H, seed=167)
+    pr = ctrl.progress
+    pr.coins = 48
+    pr.owned = {"box", "rug", "yarn", "fishtank"}
+    house = _prep_house("attic")
+    hx, hy = 30, H - house.height() - 6
+    house.move(int(hx), int(hy))
+    ctrl.open_furniture()
+    flush()
+    shop = ctrl._furn
+    shop.body.parentWidget().parentWidget().verticalScrollBar().setValue(10_000)   # 捲到閣樓的擺設
+    flush()
+    sx, sy = W - shop.width() - 20, 20
+    btn = next(b for b in shop.findChildren(type(ctrl.palette.save_btn)) if b.text() == tr("buy_n", n=22))
+    bx, by = _child_center(shop, btn)
+    frames = []
+    fx = Fx()
+    before = to_pil(shop.grab())
+    for t in range(16):
+        img = base.copy()
+        paste(img, _house_frame(house), hx, hy)
+        img.alpha_composite(before, (sx * S, sy * S))
+        k = ease(t / 15)
+        cursor(img, lerp(400, sx + bx, k), lerp(H - 80, sy + by, k), click=0.4 if t == 15 else 0)
+        frames.append(img)
+    shop._buy("kotatsu")
+    flush()
+    after = to_pil(shop.grab())
+    house.update()
+    cats_ = _room_cats(house, [("orange", None, None, 56, "loaf")])
+    for t in range(30):
+        img = base.copy()
+        paste(img, _house_frame(house), hx, hy)
+        if t > 6:
+            _draw_room_cats(img, house, hx, hy, cats_, t, fx)
+        img.alpha_composite(after, (sx * S, sy * S))
+        cursor(img, sx + bx, sy + by)
+        fx.step()
+        fx.draw(img)
+        frames.append(img)
+    shop.hide()
+    house.set_view("outside", animate=False)
+    house.hide()
+    ms._unfreeze()
+    PURGE["on"] = False
+    save_gif(frames, out_name("furnshop", lang, True), 110)
+
+
+@gif("affection", multi=True)
+def g_affection(lang):
+    """親密度：常摸、常餵就會更親，右鍵選單看得到愛心，很親的貓會走過來蹭游標。"""
+    W, H = 640, 480
+    base = desktop(W, H, seed=173)
+    g = ground_y(H)
+    frames = []
+    fx = Fx()
+    reset(cat, "brown", 1)
+    cat.love = 59
+    cx = 120
+    for t in range(26):                                  # 摸摸 → 親密度上升
+        img = base.copy()
+        pm = expr_pm("brown", "happy", 0) if t > 4 else stand_pm("brown", 2)
+        put(img, pm, cx, g)
+        lift = 0
+        if t >= 10:
+            lift = bubble(img, cx + CW / 2, g, tr("say_love_up", n=3))
+        if t % 5 == 1:
+            fx.burst("heart", cx + CW / 2, g + 24 * SC, 2)
+        fx.step()
+        fx.draw(img, lift=lift)
+        cursor(img, cx + CW / 2 - 24 + 48 * (0.5 + 0.5 * math.sin(t / 2)), g + 34 * SC)
+        frames.append(img)
+    cat.love = 60
+    menu, mimg = grab_menu(lambda m: ctrl.build_menu(cat, m))
+    acts = [a for a in menu.actions() if not a.isSeparator()]
+    li = next(i for i, a in enumerate(acts) if a.text().startswith(tr("love_level", h="")[:3]))
+    menu.hide()
+    menu, mimg = grab_menu(lambda m: ctrl.build_menu(cat, m), active=li)
+    acts = [a for a in menu.actions() if not a.isSeparator()]
+    menu.hide()
+    for t in range(16):                                  # 右鍵選單裡的愛心
+        img = base.copy()
+        put(img, stand_pm("brown", 1), cx, g)
+        glass_paste(img, mimg, cx + CW + 10, 20)
+        cursor(img, cx + CW + 80, 20 + menu.actionGeometry(acts[li]).center().y(), click=0.4 if t == 12 else 0)
+        frames.append(img)
+    for t in range(18):                                  # 點一下：說說現在多親
+        img = base.copy()
+        put(img, expr_pm("brown", "happy", 0), cx, g)
+        lift = bubble(img, cx + CW / 2, g, tr("say_love", n=3))
+        if t == 0:
+            fx.burst("heart", cx + CW / 2, g + 24 * SC, 4)
+        fx.step()
+        fx.draw(img, lift=lift)
+        frames.append(img)
+    target = 420
+    for t in range(30):                                  # 走過來蹭蹭游標
+        img = base.copy()
+        k = min(1, t / 14)
+        x = lerp(cx, target - CW / 2, ease(k))
+        if t < 14:
+            put(img, walk_pm("brown", 1, t), x, g)
+        else:
+            put(img, expr_pm("brown", "happy", 0), x, g)
+            lift = bubble(img, x + CW / 2, g, tr("say_rub"))
+            if t % 6 == 0:
+                fx.burst("heart", x + CW / 2, g + 24 * SC, 2)
+            fx.step()
+            fx.draw(img, lift=lift)
+        cursor(img, target + 10, g + 26 * SC)
+        frames.append(img)
+    cat.love = 0
+    save_gif(frames, out_name("affection", lang, True), 100)
+
+
+@gif("badges", multi=True)
+def g_badges(lang):
+    """成就徽章和貓咪日記（在專注紀錄裡）。"""
+    import datetime as dt_
+    W, H = 760, 720
+    base = desktop(W, H, seed=179)
+    g = ground_y(H)
+    pr = ctrl.progress
+    rnd = random.Random(3)
+    today = dt_.date.today()
+    pr.log = {}
+    for d in range(110):
+        day = today - dt_.timedelta(days=d)
+        if d < 8 or rnd.random() < 0.55:
+            n = rnd.randint(1, 5)
+            pr.log[day.isoformat()] = [n * 25, n]
+    pr.diary = {}
+    for d, ev in enumerate(({"can": 3, "pet": 12, "play": 2}, {"can": 1, "groom": 2, "gift": 1}, {"pet": 7, "play": 4},
+                            {"can": 2, "pet": 5})):
+        pr.diary[(today - dt_.timedelta(days=d)).isoformat()] = ev
+    pr.badges = {"first_focus", "streak_3", "foodie"}
+    frames = []
+    fx = Fx()
+    for phase in (0, 1):
+        ctrl.open_stats(cat)
+        flush()
+        st = to_pil(ctrl._stats.grab())
+        for t in range(16 if phase == 0 else 30):
+            img = base.copy()
+            img.alpha_composite(st, (250 * S, 20 * S))
+            if phase == 1:
+                put(img, expr_pm("white", "excited", 0), 90, g)
+                lift = bubble(img, 90 + CW / 2, g, tr("say_badge", b=tr("badge_streak_7")) + "\n"
+                              + tr("say_badge_reward", item=tr("item_medal")))
+                if t % 6 == 0:
+                    fx.burst("sparkle", 90 + CW / 2, g + 22 * SC, 2)
+                fx.step()
+                fx.draw(img, lift=lift)
+            else:
+                put(img, stand_pm("white", 1), 90, g)
+            frames.append(img)
+        pr.badges.add("streak_7")
+    ctrl._stats.hide()
+    save_gif(frames, out_name("badges", lang, True), 110)
+
+
+@gif("sounds", multi=True)
+def g_sounds(lang):
+    """專注時的聲音：設定裡選呼嚕聲、雨聲或壁爐聲，專注時小小聲地播放。"""
+    reset(cat, "orange", 1)
+    frames = []
+    fx = Fx()
+
+    def shot(active):
+        menu, mimg = grab_menu(lambda m: ctrl.build_menu(cat, m))
+        acts = [a for a in menu.actions() if not a.isSeparator()]
+        sa = next(a for a in acts if a.menu() and a.text() == tr("settings"))
+        menu.setActiveAction(sa)
+        flush()
+        mimg = to_pil(menu.grab())
+        geo = menu.actionGeometry(sa)
+        sub = sa.menu()
+        sub.popup(QPoint(0, 0))
+        flush()
+        snd = next(a for a in sub.actions() if a.menu() and a.text() == tr("focus_sound"))
+        sub.setActiveAction(snd)
+        flush()
+        simg = to_pil(sub.grab())
+        sgeo = sub.actionGeometry(snd)
+        ss = snd.menu()
+        ss.popup(QPoint(0, 0))
+        flush()
+        sacts = [a for a in ss.actions() if not a.isSeparator()]
+        ss.setActiveAction(sacts[active])
+        flush()
+        ssimg = to_pil(ss.grab())
+        ss.hide()
+        sub.hide()
+        menu.hide()
+        return mimg, geo, simg, sgeo, ssimg, menu.width(), sub.width(), ss.actionGeometry(sacts[active])
+    ctrl.sound.kind = "purr"
+    ctrl.sound.available = lambda: True
+    mimg, geo, simg, sgeo, ssimg, mw, sw, agi = shot(1)
+    mx, my = 120, 10
+    ss_h = ssimg.size[1] / S
+    W = int(mx + mw + sw + ssimg.size[0] / S + 30)
+    H = int(max(my + geo.top() + sgeo.top() + ss_h + 30, my + mimg.size[1] / S + 20, 420))
+    base = desktop(W, H, seed=181)
+    g = ground_y(H)
+    for t in range(16):
+        img = base.copy()
+        put(img, stand_pm("orange", 1), 20, g)
+        glass_paste(img, mimg, mx, my)
+        sx, sy = mx + mw - 6, my + geo.top() - 6
+        glass_paste(img, simg, sx, sy)
+        tx, ty = sx + sw - 6, sy + sgeo.top() - 6
+        glass_paste(img, ssimg, tx, ty)
+        cursor(img, tx + 50, ty + agi.center().y(), click=0.4 if t == 10 else 0)
+        frames.append(img)
+    for t in range(30):
+        img = base.copy()
+        x = 200 + (t % 30) * 6
+        put(img, walk_pm("orange", 1, t), x, g)
+        lift = bubble(img, x + CW / 2, g, label=(pixel.tomato(0.2 + t / 150, 2), "24:%02d" % (59 - t)))
+        if t % 5 == 0:
+            fx.burst("note", x + CW / 2, g + 22 * SC, 1)
+        fx.step()
+        fx.draw(img, lift=lift)
+        frames.append(img)
+    ctrl.sound.kind = "off"
+    save_gif(frames, out_name("sounds", lang, True), 110)
+
+
+@gif("meetings", multi=True)
+def g_meetings(lang):
+    """會議提醒：會議前 5 分鐘，貓咪跑到畫面中間提醒你，其他貓咪先回家。"""
+    ms._freeze((2026, 6, 10), 14)
+    W, H = 760, 340
+    base = desktop(W, H, seed=191)
+    house = _prep_house("outside")
+    hx, hy = W - house.width() - 20, H - house.height() - 6
+    house.move(int(hx), int(hy))
+    g = ground_y(H)
+    door_x = hx + (house.OX + 28) * house.U - CW / 2
+    frames = []
+    fx = Fx()
+    text = tr("say_meeting", m=5, t=cap("meeting_title"))
+    for t in range(56):
+        if t % 11 == 0:
+            house._puff()
+        img = base.copy()
+        tx = menubar(img)
+        paste(img, _house_frame(house), hx, hy)
+        k = min(1, t / 12)
+        x = lerp(40, W / 2 - CW / 2 - 60, ease(k))
+        if t < 12:
+            put(img, walk_pm("orange", 1, t), x, g)
+        else:
+            put(img, expr_pm("orange", "excited" if t % 10 < 5 else "happy", 0), x, g)
+            lift = bubble(img, x + CW / 2, g, text)
+            if t % 8 == 0:
+                fx.burst("sparkle", x + CW / 2, g + 22 * SC, 2)
+            fx.step()
+            fx.draw(img, lift=lift)
+        if t < 26:                                    # 其他貓咪走回家
+            kk = min(1, t / 20)
+            put(img, walk_pm("white", 1, t), lerp(330, door_x, kk), g, 1 - max(0, (t - 20) / 6))
+        frames.append(img)
+    house.anim.stop()
+    house.smoke.clear()
+    house.hide()
+    ms._unfreeze()
+    save_gif(frames, out_name("meetings", lang, True), 110)
 
 
 @gif("hero")
