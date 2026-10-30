@@ -18,6 +18,46 @@ CHIMNEY = (77, 0)           # 煙囪口
 DOOR = (16, 41, 12, 25)     # 室內的門 (x, y, w, h)
 CUSHION_X = (66, 87)        # 軟墊
 BOWL_X = (37, 46)           # 碗
+WINDOW = (37, 31, 22, 16)   # 房間的窗戶 (x, y, w, h)
+FISHTANK = (66, 41, 12, 7)  # 魚缸裡的水
+
+# 閣樓（直接開放，右鍵「去閣樓」切換）
+AH = 68                     # 閣樓剖面圖的高度
+AF = 60                     # 閣樓地板表面
+A_ROOM = (12, 92)           # 閣樓裡可以走的範圍
+A_HATCH = (7, 17)           # 地板上的樓梯口（貓咪從這裡上下樓）
+A_SHELF = (18, 28)          # 矮書櫃
+A_BED = (30, 46)            # 圓圓的大床
+A_KOTATSU = (48, 64)        # 暖桌
+A_CHIM = (70, 78)           # 穿過閣樓的煙囪
+A_FIRE = (66, 82)           # 壁爐（在煙囪下面）
+A_TOYS = (85, 95)           # 玩具箱
+A_WINDOW = (52, 25, 8)      # 圓窗 (中心 x, 中心 y, 半徑)
+A_CHIMNEY = (74, 7)         # 閣樓看時的煙囪口
+
+# 每個房間的資料：給貓屋算貓咪走路、睡覺、吃飯的位置
+ROOMS = {
+    "inside": dict(floor=IG, left=ROOM_L, right=ROOM_R, top=EAVE + 4, door=DOOR[0] + DOOR[2] / 2,
+                   bed=sum(CUSHION_X) / 2, bowl=BOWL_X[1] + 7, outside_x=ROOM_L - 9),
+    "attic": dict(floor=AF, left=A_ROOM[0], right=A_ROOM[1], top=14, door=sum(A_HATCH) / 2,
+                  bed=sum(A_BED) / 2, bowl=None, kotatsu=sum(A_KOTATSU) / 2, outside_x=sum(A_HATCH) / 2),
+}
+
+# 天氣：窗外天空要混多少灰色或白色
+WEATHER_TINT = {"cloudy": ((168, 174, 190), 0.45), "rain": ((132, 140, 160), 0.62),
+                "storm": ((90, 94, 116), 0.75), "snow": ((214, 220, 232), 0.5),
+                "fog": ((236, 238, 242), 0.6)}
+
+
+def sky_colors(phase, weather=None):
+    top, bot = SKY[phase] if phase in SKY else SKY["day"]
+    if weather in WEATHER_TINT:
+        tint, k = WEATHER_TINT[weather]
+        if phase == "night":
+            k *= 0.5
+        mix = lambda a: tuple(int(x + (y - x) * k) for x, y in zip(a, tint))  # noqa: E731
+        top, bot = mix(top), mix(bot)
+    return top, bot
 
 # 房屋外觀用的顏色（和 house.png 同一組）
 C = {
@@ -90,7 +130,10 @@ def glow(c, cx, cy, r, color=(255, 214, 140), alphas=(70, 46, 26), clip=None):
     n = len(alphas)
     for y in range(int(cy - r), int(cy + r) + 1):
         for x in range(int(cx - r), int(cx + r) + 1):
-            if clip and not (clip[0] <= x <= clip[1] and clip[2] <= y <= clip[3]):
+            if callable(clip):
+                if not clip(x, y):
+                    continue
+            elif clip and not (clip[0] <= x <= clip[1] and clip[2] <= y <= clip[3]):
                 continue
             d = math.hypot((x - cx), (y - cy) * 1.15) / r
             if d > 1:
@@ -108,7 +151,7 @@ def _shadow(c, x, w, y=IG):
     c.rect(x + 1, y, w - 2, 1, QColor(60, 40, 40, 60))
 
 
-def draw_item(c, item, night=False):
+def draw_item(c, item, night=False, preview=False):
     if item == "cushion":
         x0, x1 = CUSHION_X
         w = x1 - x0
@@ -176,7 +219,8 @@ def draw_item(c, item, night=False):
         c.rect(66, 41, 12, 2, (186, 228, 255))
         c.rect(66, 46, 12, 2, (238, 204, 152))
         c.rect(68, 43, 1, 3, "G"); c.rect(76, 42, 1, 4, "G")
-        c.rect(71, 43, 3, 2, "O"); c.px(74, 43, "O"); c.px(72, 43, "K")
+        if preview:                                      # 房間裡的小魚會游（貓屋另外畫）
+            c.rect(71, 43, 3, 2, "O"); c.px(74, 43, "O"); c.px(72, 43, "K")
     elif item == "yarn":
         c.grid(58, IG - 7, art.YARN[0])
         c.rect(57, IG - 1, 2, 1, (226, 88, 140))
@@ -202,15 +246,265 @@ def item_preview(item, unit=2):
     """商店裡的擺設預覽圖（單獨把那一樣畫出來，裁掉空白）。"""
     boxes = {"rug": (46, IG - 2, 24, 4), "plant": (53, 37, 8, 13), "lamp": (82, 39, 10, 28),
              "painting": (65, 28, 15, 12), "scratcher": (46, IG - 19, 10, 20),
-             "fishtank": (62, 39, 20, 13), "yarn": (56, IG - 8, 10, 9), "cushion": (65, IG - 8, 24, 9)}
+             "fishtank": (62, 39, 20, 13), "yarn": (56, IG - 8, 10, 9), "cushion": (65, IG - 8, 24, 9),
+             "bookshelf": (A_SHELF[0], AF - 12, 10, 13), "kotatsu": (A_KOTATSU[0] - 1, AF - 13, 18, 14),
+             "fireplace": (A_FIRE[0] - 1, AF - 16, 18, 17)}
     x, y, w, h = boxes.get(item, (0, 0, 12, 12))
     c = _Canvas(IW, IH, unit)
-    draw_item(c, item)
+    if item in ("bookshelf", "kotatsu", "fireplace"):
+        draw_attic_item(c, item, True)
+    else:
+        draw_item(c, item, preview=True)
     pm = c.pixmap()
     d = pm.devicePixelRatio()
     out = pm.copy(int(x * unit * d), int(y * unit * d), int(w * unit * d), int(h * unit * d))
     out.setDevicePixelRatio(d)
     return out
+
+
+# ---------------- 閣樓 ---------------- #
+def _a_outer(y):
+    return int((y - 1) * 52 / 49) + 1
+
+
+def _a_inner(y):
+    return int((y - 7) * 52 / 49)
+
+
+def attic_roof_rows():
+    """閣樓剖面的屋頂外緣：{y: (x0, x1)}（給積雪用）。"""
+    return {y: (max(0, 52 - _a_outer(y)), min(IW - 1, 51 + _a_outer(y))) for y in range(1, 51)}
+
+
+def window_sky(c, x, y, w, h, phase, weather, clip=None):
+    top_c, bot_c = sky_colors(phase, weather)
+    for i in range(h):
+        t = i / max(1, h - 1)
+        col = tuple(int(a + (b - a) * t) for a, b in zip(top_c, bot_c))
+        for j in range(w):
+            if clip is None or clip(x + j, y + i):
+                c.px(x + j, y + i, col)
+
+
+def draw_attic_item(c, item, lit=False):
+    F = AF
+    if item == "bookshelf":
+        x0, x1 = A_SHELF
+        _shadow(c, x0, x1 - x0, F)
+        c.rect(x0, F - 12, x1 - x0, 12, "K")
+        c.rect(x0 + 1, F - 11, x1 - x0 - 2, 11, (186, 128, 86))
+        books = [(232, 96, 96), (98, 150, 214), (255, 214, 84), (108, 198, 96), (182, 146, 244), (255, 168, 64)]
+        for row, yy in enumerate((F - 10, F - 5)):
+            x = x0 + 2
+            k = row * 2
+            while x < x1 - 2:
+                bw = 1 + (k % 2)
+                bh = 4 - (k % 3 == 0)
+                c.rect(x, yy + (4 - bh), bw, bh, books[k % len(books)])
+                x += bw
+                k += 1
+            c.rect(x0 + 1, yy + 4, x1 - x0 - 2, 1, "K")
+    elif item == "kotatsu":
+        x0, x1 = A_KOTATSU
+        _shadow(c, x0 - 1, x1 - x0 + 2, F)
+        c.rect(x0 - 1, F - 9, x1 - x0 + 2, 2, "K")
+        c.rect(x0, F - 9, x1 - x0, 1, "wood_l")
+        c.rect(x0, F - 7, x1 - x0, 7, "K")
+        for yy in range(F - 6, F):
+            for xx in range(x0 + 1, x1 - 1):
+                checker = ((xx - x0) // 3 + (yy - F) // 2) % 2
+                c.px(xx, yy, (236, 104, 120) if checker else (255, 172, 176))
+        c.rect(x0 + 1, F - 1, x1 - x0 - 2, 1, (196, 70, 96))
+        c.rect(x0 + 6, F - 12, 5, 3, "K")                     # 一盤橘子
+        c.rect(x0 + 7, F - 11, 3, 1, "W")
+        c.px(x0 + 7, F - 12, "O"); c.px(x0 + 9, F - 12, "O"); c.px(x0 + 8, F - 13, "O")
+    elif item == "fireplace":
+        x0, x1 = A_FIRE
+        c.rect(x0, F - 15, x1 - x0, 15, "K")
+        c.rect(x0 + 1, F - 14, x1 - x0 - 2, 14, "stone")
+        for yy in range(F - 13, F, 3):
+            for xx in range(x0 + 2 + (yy // 3) % 2 * 2, x1 - 1, 4):
+                c.px(xx, yy, "stone_d")
+        c.rect(x0 - 1, F - 16, x1 - x0 + 2, 2, "K")
+        c.rect(x0, F - 16, x1 - x0, 1, "wood_l")
+        c.rect(x0 + 3, F - 9, x1 - x0 - 6, 9, "K")
+        c.rect(x0 + 4, F - 8, x1 - x0 - 8, 8, (60, 38, 40))
+        c.rect(x0 + 5, F - 2, x1 - x0 - 10, 2, (140, 90, 60))        # 木柴
+        c.rect(x0 + 6, F - 3, 3, 1, (176, 124, 82)); c.rect(x0 + 10, F - 3, 2, 1, (176, 124, 82))
+        if not lit:
+            c.px(x0 + 8, F - 4, (220, 110, 60))
+    elif item == "sill":
+        pass
+
+
+def attic(owned, phase, deco, unit, weather=None):
+    """閣樓剖面：斜斜的屋頂、木頭牆、圓窗、樓梯口、大床、玩具箱，還有穿過閣樓的煙囪。"""
+    lit = phase in ("dusk", "night") or weather in ("rain", "storm")
+    key = ("attic", tuple(sorted(owned)), phase, tuple(sorted(deco)), unit, weather)
+    if key in art._cache:
+        return art._cache[key]
+    c = _Canvas(IW, AH, unit)
+    F = AF
+    # 煙囪露出屋頂的那一截（畫在屋頂後面）
+    cx0, cx1 = A_CHIM
+    c.rect(cx0 - 1, A_CHIMNEY[1] - 1, cx1 - cx0 + 3, 3, "K")
+    c.rect(cx0, A_CHIMNEY[1], cx1 - cx0 + 1, 1, "c")
+    c.rect(cx0, A_CHIMNEY[1] + 2, cx1 - cx0 + 1, 20, "K")
+    c.rect(cx0 + 1, A_CHIMNEY[1] + 2, cx1 - cx0 - 1, 20, "B")
+    # 屋頂外圈：一層紅色瓦片
+    for y in range(1, 51):
+        half = _a_outer(y)
+        x0, x1 = max(0, 52 - half), min(IW - 1, 51 + half)
+        c.rect(x0, y, x1 - x0 + 1, 1, "K")
+        c.rect(x0 + 1, y, x1 - x0 - 1, 1, "R")
+        row = y - 1
+        if row % 4 == 3:
+            c.rect(x0 + 1, y, x1 - x0 - 1, 1, "r")
+        if row % 4 == 1:
+            for x in range(x0 + 2 + (row // 4) % 2 * 2, x1 - 1, 4):
+                c.px(x, y, "h")
+        c.rect(x0 + 1, y, 2, 1, "h")
+    c.rect(0, 50, IW, 2, "K")
+    c.rect(1, 50, IW - 2, 1, "e")
+    # 裡面：木頭板牆（直條木紋）
+    for y in range(7, F):
+        hin = _a_inner(y) if y < 50 else 99
+        x0, x1 = max(5, 52 - hin), min(IW - 6, 51 + hin)
+        if x1 <= x0:
+            continue
+        c.rect(x0, y, x1 - x0 + 1, 1, (238, 196, 150))
+        for x in range(x0, x1 + 1):
+            if (x - 3) % 7 == 0:
+                c.px(x, y, (214, 168, 120))
+            elif (x - 4) % 7 == 0:
+                c.px(x, y, (248, 214, 172))
+        if y < 50:                                    # 斜斜的椽木
+            c.rect(x0, y, 2, 1, "beam"); c.rect(x1 - 1, y, 2, 1, "beam")
+            c.px(x0, y, "K"); c.px(x1, y, "K")
+    c.rect(5, 50, 1, F - 50, "K"); c.rect(IW - 6, 50, 1, F - 50, "K")
+    c.rect(6, 50, IW - 12, 1, (214, 168, 120))         # 矮牆的頂
+    # 橫樑和上面的小燈泡
+    c.rect(30, 15, 44, 2, "beam")
+    c.rect(30, 15, 44, 1, (190, 140, 112))
+    c.rect(30, 17, 44, 1, "attic_d")
+    bulbs = [(255, 214, 84), (255, 132, 176), (130, 210, 255), (172, 228, 112)]
+    for i, x in enumerate(range(32, 73, 4)):
+        c.px(x, 18 + (i % 2), "K")
+        c.px(x, 19 + (i % 2), bulbs[i % 4] if lit else (190, 180, 170))
+    # 圓窗
+    wx, wy, r = A_WINDOW
+    inside = lambda x, y: (x - wx + 0.5) ** 2 + (y - wy + 0.5) ** 2 <= (r - 1.5) ** 2  # noqa: E731
+    for y in range(wy - r - 1, wy + r + 1):
+        for x in range(wx - r - 1, wx + r + 1):
+            d = ((x - wx + 0.5) ** 2 + (y - wy + 0.5) ** 2) ** 0.5
+            if d <= r + 0.5:
+                c.px(x, y, "K" if d > r - 0.5 else "Cr")
+    window_sky(c, wx - r, wy - r, r * 2, r * 2, phase, weather, inside)
+    if phase == "night" and weather not in ("cloudy", "rain", "storm", "snow", "fog"):
+        c.rect(wx + 1, wy - 5, 3, 3, (255, 240, 190)); c.rect(wx + 2, wy - 5, 2, 2, sky_colors(phase)[0])
+        for sx, sy in ((wx - 4, wy - 3), (wx - 2, wy + 3), (wx + 4, wy + 2)):
+            c.px(sx, sy, "W")
+    elif weather in ("cloudy", "rain", "storm", "snow", "fog"):
+        cloud = (204, 208, 222) if weather != "storm" else (128, 132, 156)
+        c.rect(wx - 5, wy - 3, 7, 2, cloud); c.rect(wx, wy + 1, 6, 2, cloud)
+    elif phase == "dusk":
+        c.rect(wx - 2, wy + 2, 4, 3, (255, 214, 120))
+    elif phase == "morning":
+        c.rect(wx - 4, wy + 2, 3, 3, (255, 246, 214))
+    else:
+        c.rect(wx - 4, wy - 3, 5, 2, "W"); c.rect(wx + 1, wy + 2, 4, 1, "W")
+    c.rect(wx, wy - r + 1, 1, r * 2 - 2, "Cr")
+    c.rect(wx - r + 1, wy, r * 2 - 2, 1, "Cr")
+    c.rect(wx - 6, wy + r + 1, 12, 2, "K")              # 窗台
+    c.rect(wx - 5, wy + r + 1, 10, 1, "wood_l")
+    # 穿過閣樓的煙囪（紅磚）
+    c.rect(cx0, 30, cx1 - cx0 + 1, F - 30, "K")
+    c.rect(cx0 + 1, 30, cx1 - cx0 - 1, F - 30, "B")
+    for y in range(32, F, 3):
+        c.rect(cx0 + 1, y, cx1 - cx0 - 1, 1, "m")
+        c.px(cx0 + (2 if (y // 3) % 2 else 5), y + 1, "m")
+    c.rect(cx0 + 1, 30, 1, F - 30, "b")
+    # 吊著的紙燈籠
+    c.rect(40, 17, 1, 5, "K")
+    c.rect(38, 22, 5, 6, "K")
+    c.rect(39, 23, 3, 4, (255, 236, 170) if lit else (246, 222, 196))
+    c.rect(39, 24, 3, 1, (236, 196, 140))
+    # 地板（木頭剖面）和下面的樑
+    c.rect(0, F, IW, 1, "K")
+    c.rect(1, F, IW - 2, 1, "wood_l")
+    c.rect(1, F + 1, IW - 2, 3, "wood")
+    for x in range(4, IW - 4, 9):
+        c.px(x, F + 2, "wood_d")
+    c.rect(0, F + 4, IW, 1, "K")
+    for x in range(1, IW - 1, 6):
+        c.rect(x, F + 5, 4, 2, "wood_d")
+        c.rect(x + 4, F + 5, 2, 2, "attic_d")
+    c.rect(0, AH - 1, IW, 1, "K")
+    for x0 in (0, IW - 5):                            # 兩側的牆剖面
+        c.rect(x0, 50, 5, F - 50 + 4, "K")
+        c.rect(x0 + 1, 52, 3, F - 52, "T")
+        for y in range(54, F, 4):
+            c.rect(x0 + 1, y, 3, 1, "t")
+    # 樓梯口和梯子
+    hx0, hx1 = A_HATCH
+    c.rect(hx0, F, hx1 - hx0, 4, (70, 46, 46))
+    c.rect(hx0, F, hx1 - hx0, 1, "K")
+    for x in (hx0 + 1, hx1 - 2):
+        c.rect(x, F - 9, 1, 13, "K")
+        c.rect(x + (1 if x == hx0 + 1 else -1), F - 9, 1, 13, "wood_d")
+    for y in range(F - 7, F + 4, 3):
+        c.rect(hx0 + 2, y, hx1 - hx0 - 4, 1, "wood")
+    # 大床：薰衣草紫的圓邊，奶油色的墊子
+    x0, x1 = A_BED
+    _shadow(c, x0, x1 - x0, F)
+    c.rect(x0 + 1, F - 7, x1 - x0 - 2, 1, "K")
+    c.rect(x0, F - 6, x1 - x0, 6, "K")
+    c.rect(x0 + 1, F - 6, x1 - x0 - 2, 5, "V")
+    c.rect(x0 + 2, F - 7, x1 - x0 - 4, 1, (214, 194, 255))
+    c.rect(x0 + 3, F - 5, x1 - x0 - 6, 2, "N")
+    c.rect(x0 + 1, F - 2, x1 - x0 - 2, 1, (140, 110, 210))
+    # 玩具箱
+    x0, x1 = A_TOYS
+    _shadow(c, x0, x1 - x0, F)
+    c.rect(x0, F - 8, x1 - x0, 8, "K")
+    c.rect(x0 + 1, F - 7, x1 - x0 - 2, 7, (226, 160, 96))
+    c.rect(x0 + 1, F - 4, x1 - x0 - 2, 1, (186, 120, 70))
+    c.grid(x0 + 1, F - 13, art.YARN[0])
+    c.rect(x0 + 6, F - 10, 3, 2, (150, 150, 158)); c.px(x0 + 8, F - 11, (214, 179, 157))   # 玩具老鼠
+    # 擺設
+    for it in ("bookshelf", "kotatsu", "fireplace"):
+        if it in owned:
+            draw_attic_item(c, it, lit)
+    if "xmas" in deco:
+        cols = [(232, 72, 72), (255, 214, 70), (90, 190, 90), (90, 150, 230)]
+        for i, x in enumerate(range(10, 94, 5)):
+            c.px(x, 51, cols[i % 4])
+    if "halloween" in deco:
+        c.grid(86, F - 21, art.PUMPKIN)
+    # 傍晚和晚上：變暗，燈籠和燈泡發光（只畫在閣樓裡面）
+    def room(x, y):
+        if not (7 <= y < F and 6 <= x <= IW - 7):
+            return False
+        hin = _a_inner(y) if y < 50 else 99
+        return 52 - hin < x < 51 + hin
+
+    def tint(col):
+        for y in range(7, F):
+            hin = _a_inner(y) if y < 50 else 99
+            x0, x1 = max(6, 52 - hin + 1), min(IW - 7, 51 + hin - 1)
+            if x1 >= x0:
+                c.rect(x0, y, x1 - x0 + 1, 1, col)
+    if phase == "dusk":
+        tint(QColor(240, 110, 60, 34))
+        glow(c, 40, 25, 10, alphas=(46, 30, 16), clip=room)
+    elif phase == "night":
+        tint(QColor(20, 24, 70, 112))
+        glow(c, 40, 25, 14, clip=room)
+        c.rect(39, 23, 3, 4, (255, 244, 200))
+    elif phase == "morning":
+        tint(QColor(255, 170, 140, 20))
+    art._cache[key] = c.pixmap()
+    return art._cache[key]
 
 
 # ---------------- 整間屋子的剖面 ---------------- #
@@ -222,12 +516,12 @@ SKY = {                      # 窗外天空：(上, 下)
 }
 
 
-def dollhouse(owned, phase, deco, unit):
+def dollhouse(owned, phase, deco, unit, weather=None):
     if phase is True or phase is False:          # 舊的呼叫方式：night = True/False
         phase = "night" if phase else "day"
     night = phase == "night"
-    lit = phase in ("dusk", "night")             # 傍晚就開燈
-    key = ("dollhouse", tuple(sorted(owned)), phase, tuple(sorted(deco)), unit)
+    lit = phase in ("dusk", "night") or weather in ("rain", "storm")      # 傍晚、下雨天就開燈
+    key = ("dollhouse", tuple(sorted(owned)), phase, tuple(sorted(deco)), unit, weather)
     if key in art._cache:
         return art._cache[key]
     c = _Canvas(IW, IH, unit)
@@ -302,11 +596,15 @@ def dollhouse(owned, phase, deco, unit):
     wx, wy, ww, wh = 37, 31, 22, 16
     c.rect(wx - 2, wy - 2, ww + 4, wh + 4, "K")
     c.rect(wx - 1, wy - 1, ww + 2, wh + 2, "Cr")
-    top_c, bot_c = SKY[phase]
+    top_c, bot_c = sky_colors(phase, weather)
     for i in range(wh):
         t = i / (wh - 1)
         c.rect(wx, wy + i, ww, 1, tuple(int(a + (b - a) * t) for a, b in zip(top_c, bot_c)))
-    if phase == "morning":                       # 剛升起來的太陽和淡淡的雲
+    if weather in ("cloudy", "rain", "storm", "snow", "fog"):          # 陰天：大朵的灰雲蓋住太陽
+        cloud = (204, 208, 222) if weather != "storm" else (128, 132, 156)
+        c.rect(wx + 1, wy + 3, 9, 3, cloud); c.rect(wx + 3, wy + 2, 5, 1, cloud)
+        c.rect(wx + 11, wy + 6, 10, 3, cloud); c.rect(wx + 13, wy + 5, 5, 1, cloud)
+    elif phase == "morning":                       # 剛升起來的太陽和淡淡的雲
         c.rect(wx + 4, wy + 10, 5, 4, (255, 246, 214)); c.rect(wx + 5, wy + 9, 3, 6, (255, 246, 214))
         c.rect(wx + 5, wy + 10, 3, 4, (255, 255, 236))
         c.rect(wx + 12, wy + 4, 6, 2, (255, 236, 236)); c.rect(wx + 13, wy + 3, 3, 1, (255, 236, 236))
@@ -342,7 +640,7 @@ def dollhouse(owned, phase, deco, unit):
     c.rect(wx - 5, wy - 4, ww + 10, 1, "wood")
 
     # 白天：從窗戶斜斜照進來的光（早上偏粉橘、傍晚偏橘紅，斜得更厲害）
-    if phase != "night":
+    if phase != "night" and weather not in ("cloudy", "rain", "storm", "snow", "fog"):
         beam = {"morning": (QColor(255, 226, 196, 52), 2), "day": (QColor(255, 255, 230, 46), 2),
                 "dusk": (QColor(255, 170, 110, 46), 1)}[phase]
         for i in range(IG - (wy + wh + 3)):

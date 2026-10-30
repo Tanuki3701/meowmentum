@@ -67,6 +67,8 @@ class Cat(QWidget):
         self.name = str(self._pref("name", "") or "")
         self.hat = str(self._pref("hat", "") or "") or None
         self.neck = str(self._pref("neck", "") or "") or None
+        self.love = int(self._pref("love", 0) or 0)       # 親密度 0~100
+        self._last_love = 0.0
         self._clicks = []
         self._crossing = False
         self._waypoints = []
@@ -99,6 +101,9 @@ class Cat(QWidget):
         self.anim_timer = self._timer(self._next_frame)
         self.anim_timer.setInterval(ANIM_INTERVAL)
         self.act_timer = self._timer(self._act_step)
+        self.fidget_timer = self._timer(self._idle_fidget)
+        self.fidget_timer.setSingleShot(True)
+        self.fidget_timer.start(random.randint(12_000, 30_000))
         self.rest_timer = self._timer(self._rest_done)
         self.rest_timer.setSingleShot(True)
         self.expression = None      # 表情：happy / excited / yuck / dizzy
@@ -143,7 +148,12 @@ class Cat(QWidget):
         self.update()
 
     def paintEvent(self, _e):
-        if self.activity == "sleep":
+        style = getattr(self, "_sleep_style", "side")
+        if self.activity == "sleep" and style in ("loaf", "belly"):
+            pm = self.frames["pose"][style][self._sleep_side][self.frame % 2]
+        elif self.activity == "fidget":
+            pm = self.frames["pose"][self.pose][self._pose_side][self._pose_frame]
+        elif self.activity == "sleep":
             pm = self.frames["sleep"][self._sleep_side][self.frame % 2]
         elif self.expression and not self.walking:
             pm = self.frames["expr"][self.expression][self._expr_side]
@@ -596,6 +606,7 @@ class Cat(QWidget):
         self._stop_all()
         self.activity = "sleep"
         self._sleep_side = 1 if self.direction == LEFT else 0
+        self._sleep_style = random.choice(("side", "side", "loaf", "belly"))   # 側躺、麻糬、肚子朝上
         self.frame = 0
         self._act_count = 0
         self.act_timer.start(BREATH_INTERVAL)
@@ -615,8 +626,92 @@ class Cat(QWidget):
             self.overlay.say(tr("say_morning"), 2000)
         self._resume()
 
+    # ---------------- 小動作：坐著甩尾巴、洗臉、打哈欠、伸懶腰、追尾巴 ---------------- #
+    FIDGETS = {"sit": (16, 300), "wash": (12, 260), "yawn": (6, 320), "stretch": (7, 320)}
+
+    def fidget(self, kind=None):
+        if self.activity is not None or self.ctrl.all_hidden:
+            return False
+        kind = kind or random.choice(["sit", "sit", "wash", "yawn", "stretch", "chase"])
+        if kind == "chase":                      # 追自己的尾巴：轉圈圈
+            self.spin(3)
+            self.overlay.burst("sparkle", 1)
+            return True
+        self._stop_all()
+        self.activity = "fidget"
+        self.pose = kind
+        self._pose_side = 1 if self.direction == LEFT else (0 if self.direction == RIGHT else random.randint(0, 1))
+        self._pose_frame = 0
+        self._act_count = 0
+        self.act_timer.start(self.FIDGETS[kind][1])
+        self.update()
+        return True
+
+    def _fidget_step(self, n):
+        steps, _ms = self.FIDGETS[self.pose]
+        if self.pose == "sit":
+            self._pose_frame = 1 if n % 5 in (2, 3) else 0          # 尾巴尖甩一下
+        elif self.pose == "wash":
+            self._pose_frame = n % 2
+        self.update()
+        if n >= steps:
+            self.act_timer.stop()
+            self.activity = None
+            self.direction = LEFT if self._pose_side else RIGHT
+            self._resume()
+
+    def _idle_fidget(self):
+        """待著不動或休息時，偶爾做個小動作；很親的貓偶爾會走過來蹭蹭游標。"""
+        if self.mode in ("idle", "random") and self.activity is None and not self.walking \
+                and self.isVisible() and not self.ctrl.sleeping:
+            if self.love >= 60 and random.random() < 0.25 and self.rub_cursor():
+                pass
+            else:
+                self.fidget()
+        if self.mode in ("idle", "random"):
+            self.fidget_timer.start(random.randint(18_000, 45_000))
+
+    # ---------------- 親密度 ---------------- #
+    def love_level(self):
+        return min(5, self.love // 20)
+
+    def add_love(self, n, why=None):
+        before = self.love_level()
+        self.love = max(0, min(100, self.love + n))
+        self._save("love", self.love)
+        if self.love_level() > before:
+            self.overlay.say(tr("say_love_up", n=self.love_level()), 2600)
+            self.overlay.burst("heart", 4)
+        self.ctrl.check_badges()
+
+    def show_love(self):
+        self.overlay.say(tr("say_love", n=self.love_level()), 3200)
+        self.overlay.burst("heart", 1 + self.love_level())
+
+    def rub_cursor(self):
+        """親密度高的貓：偶爾自己走過來蹭蹭游標。"""
+        if self.activity is not None or self.indoor is not None or self.mode not in ("idle", "random"):
+            return False
+        pos = QCursor.pos()
+        r = self.screen_rect()
+        if not r.contains(pos):
+            return False
+        tx = max(r.left(), min(r.right() - self.width(), pos.x() - self.width() / 2))
+
+        def arrived():
+            self.show_expression("happy", 2600)
+            self.overlay.say(tr("say_rub"), 2200)
+            self.overlay.burst("heart", 3)
+            self.hold(2600)
+        self.go_to(tx, self.ground_y(), then=arrived, speed=4)
+        return True
+
     def petted(self):
         self.overlay.burst("heart", 3)
+        self.ctrl.progress.note("pet")
+        if time.monotonic() - self._last_love > 8:
+            self._last_love = time.monotonic()
+            self.add_love(1)
         if self.activity != "sleep":
             self.overlay.say(random.choice(tr("say_pet")), 1800)
 
@@ -635,6 +730,8 @@ class Cat(QWidget):
                 else:
                     self.wake(quiet=True, force=True)
                     self.start_fall()
+        elif self.activity == "fidget":
+            self._fidget_step(n)
         elif self.activity == "spin":
             self.direction = (DOWN, RIGHT, UP, LEFT)[n % 4]
             self.update()
@@ -696,6 +793,9 @@ class Cat(QWidget):
             ov.burst("heart", 2)
             self.hold(2200)
             return
+        self.ctrl.progress.note("can")
+        self.ctrl.progress.try_flavor(flavor)
+        self.add_love(2)
         if flavor == "chicken":
             self.show_expression("happy", 3000)
             ov.say(tr("react_chicken"), 3000)
@@ -793,7 +893,7 @@ class Cat(QWidget):
             self.setWindowOpacity(1.0)
             self.activity = "home"
             house.add(self)
-            if house.view == "inside":
+            if house.is_interior():
                 self.enter_indoor(house, from_door=True)
         self._fade(0.0, 300, gone)
 
@@ -857,7 +957,7 @@ class Cat(QWidget):
         """貓屋換成「裡面」的樣子：在家的貓咪出現在房間裡，可以點、拖、按右鍵。"""
         self._stop_all()
         self.indoor = house
-        self.use_room_scale(house.U)
+        self._restore_scale()
         self.activity = None
         self.expression = None
         lo, hi = house.indoor_x_range(self)
@@ -911,31 +1011,98 @@ class Cat(QWidget):
 
     def _indoor_next(self):
         house = self.indoor
-        if house is None or house.view != "inside":
+        if house is None or not house.is_interior():
             return
         y = house.indoor_floor_y(self)
         lo, hi = house.indoor_x_range(self)
         others = [c for c in house.residents if c is not self and c.indoor is house]
-        kinds = ["walk", "walk", "walk", "walk", "sit", "sit", "sleep", "eat", "eat"]
+        attic = house.view == "attic"
+        kinds = ["walk", "walk", "walk", "walk", "sit", "sit", "sleep"]
+        kinds += ["play", "play"] if attic else ["eat", "eat"]
+        if attic and "kotatsu" in self.ctrl.progress.owned:
+            kinds += ["kotatsu"]
+        awake = [c for c in others if c.activity in (None, "hold") and c._indoor_kind in ("sit", "walk", None)]
+        if awake:
+            kinds += ["groom", "groom"]                    # 幫房間裡的朋友理毛
         if self.ctrl.sleeping:
             kinds = ["sleep"]
         k = random.choice(kinds)
-        if k in ("sleep", "eat") and any(c._indoor_kind == k for c in others):
-            k = "walk" if (k == "eat" or random.random() < 0.6) else "nap"
+        sleeper = next((c for c in others if c._indoor_kind in ("sleep", "cuddle") and c.activity == "sleep"), None)
+        if k == "sleep" and sleeper is not None:
+            k = "cuddle"                                   # 有朋友在床上睡：擠過去一起睡
+        if k == "eat" and any(c._indoor_kind == "eat" for c in others):
+            k = "walk"
+        if k == "kotatsu" and any(c._indoor_kind == "kotatsu" for c in others):
+            k = "sleep" if sleeper is None else "cuddle"
         self._indoor_kind = k
         if k == "walk":
             self.go_to(random.uniform(lo, hi), y, then=lambda: self.hold(random.randint(1200, 3500)),
                        speed=2.6, keep_indoor=True)
         elif k == "sit":
-            self.direction = DOWN
-            self.update()
-            self.hold(random.randint(2500, 6000))
-        elif k in ("sleep", "nap"):
-            tx = house.indoor_spot_x(self, "cushion") if k == "sleep" else random.uniform(lo, hi)
-            self.go_to(tx, y, then=self._indoor_sleep, speed=2.6, keep_indoor=True)
+            self.direction = random.choice((LEFT, RIGHT))
+            if not self.fidget(random.choice(["sit", "sit", "wash", "yawn", "stretch"])):
+                self.hold(random.randint(2500, 6000))
+        elif k == "sleep":
+            self.go_to(house.indoor_spot_x(self, "cushion"), y, then=self._indoor_sleep, speed=2.6,
+                       keep_indoor=True)
+        elif k == "cuddle":
+            side = random.choice((-1, 1))
+            tx = sleeper.x() + side * sleeper.width() * 0.42
+            tx = max(lo - self.width() * 0.2, min(hi + self.width() * 0.2, tx))
+            self.go_to(tx, y, then=lambda: self._indoor_cuddle(sleeper), speed=2.6, keep_indoor=True)
+        elif k == "kotatsu":
+            self.go_to(house.indoor_spot_x(self, "kotatsu"), y, then=self._indoor_sleep, speed=2.6,
+                       keep_indoor=True)
+        elif k == "groom":
+            friend = random.choice(awake)
+            friend._stop_all()
+            friend._indoor_kind = "groomed"
+            friend.hold(9000)
+            side = -1 if self.center_x() < friend.center_x() else 1
+            tx = friend.x() + side * friend.width() * 0.55
+            tx = max(lo, min(hi, tx))
+            self.go_to(tx, y, then=lambda: self._indoor_groom(friend), speed=3, keep_indoor=True)
+        elif k == "play":
+            self.go_to(house.indoor_spot_x(self, "cushion") if not attic else
+                       house._gx(sum(interior.A_TOYS) / 2) - self.width() * 0.75, y,
+                       then=self._indoor_play, speed=3.4, keep_indoor=True)
         else:
             self.go_to(house.indoor_spot_x(self, "bowl"), y, then=self._indoor_eat, speed=3,
                        keep_indoor=True)
+
+    def _indoor_cuddle(self, friend):
+        """擠在朋友旁邊睡，臉朝向對方。"""
+        self.direction = RIGHT if self.center_x() < friend.center_x() else LEFT
+        self.sleep()
+        self.overlay.burst("heart", 1)
+        self.indoor_timer.start(random.randint(16_000, 34_000))
+
+    def _indoor_groom(self, friend):
+        if friend.indoor is not self.indoor:
+            self._resume()
+            return
+        self.direction = RIGHT if self.center_x() < friend.center_x() else LEFT
+        friend.direction = LEFT if self.direction == RIGHT else RIGHT
+        friend.update()
+        self.show_expression("happy", 3200)
+        friend.show_expression("happy", 3200)
+        self.overlay.burst("heart", 2)
+        self.ctrl.progress.note("groom")
+        self.add_love(1)
+        friend.add_love(1)
+        QTimer.singleShot(1200, lambda: friend.indoor is not None and friend.overlay.say(
+            random.choice(tr("say_groom")), 2400))
+        QTimer.singleShot(1500, lambda: friend.indoor is not None and friend.overlay.burst("heart", 2))
+        self.hold(3800)
+        QTimer.singleShot(4200, lambda: friend.indoor is not None and friend.activity == "hold"
+                          and friend._resume())
+
+    def _indoor_play(self):
+        """在閣樓的玩具箱旁邊玩：跳一下、興奮一下。"""
+        self.direction = RIGHT
+        self.show_expression("excited", 2200)
+        self.overlay.burst("sparkle", 2)
+        self.hold(2600)
 
     def _indoor_sleep(self):
         self.direction = random.choice((LEFT, RIGHT))
@@ -990,15 +1157,9 @@ class Cat(QWidget):
         if e.button() != Qt.LeftButton or not self._press:
             return
         self._press = None
+        if self.activity == "drag" and self._drop_on_house():
+            return
         if self.activity == "drag" and self.indoor is not None:
-            house = self.indoor
-            feet = QPoint(int(self.center_x()), int(self.y() + self.height() - self.foot_off() - 6))
-            if house.room_contains(feet):
-                lo, hi = house.indoor_x_range(self)
-                self.activity = None
-                self._move_to(max(lo, min(hi, self.x())), house.indoor_floor_y(self), clamp=False)
-                self._resume()
-                return
             self._leave_indoor_silent()                # 被拖到屋子外面：就出門了
         if self.activity == "drag":
             self.activity = None
@@ -1023,6 +1184,34 @@ class Cat(QWidget):
             if len(self._clicks) >= 5:
                 self._clicks = []
                 self.annoyed()
+
+    def _drop_on_house(self):
+        """把貓咪拖到貓屋上放開：看外面時就回家，看裡面時就住進房間。"""
+        house = self.ctrl.house
+        if not house.isVisible():
+            return False
+        feet = QPoint(int(self.center_x()), int(self.y() + self.height() - self.foot_off() - 6))
+        if house.is_interior() and house.room_contains(feet):
+            if self.indoor is not house:
+                self._leave_indoor_silent()
+                self._drop_spot()
+                house.add(self)
+            self.indoor = house
+            self.activity = None
+            lo, hi = house.indoor_x_range(self)
+            self._move_to(max(lo, min(hi, self.x())), house.indoor_floor_y(self), clamp=False)
+            self.overlay.burst("heart", 1)
+            self._resume()
+            house.raise_residents()
+            return True
+        if not house.is_interior() and house.body_contains(feet):
+            self._drop_spot()
+            self.activity = None
+            x, y = house.door_cat_pos(self)
+            self._move_to(x, y, clamp=False)
+            self._enter_home(house)
+            return True
+        return False
 
     def contextMenuEvent(self, e):
         menu = GlassMenu()
@@ -1050,6 +1239,8 @@ class Cat(QWidget):
         look.addSeparator()
         look.item("shop", tr("shop"), lambda: self.ctrl.open_shop(self))
         menu.item("name", tr("name_cat", n=self.display_name()), lambda: self.ctrl.rename(self))
+        lv = self.love_level()
+        menu.item("heart", tr("love_level", h="♥" * lv + "♡" * (5 - lv)), self.show_love)
         menu.sub("facing", tr("facing")).choices(
             {d: tr(k) for d, k in DIRECTIONS.items()}, self.idle_direction, self.set_idle_direction)
         menu.sub("size", tr("size")).choices(
@@ -1095,6 +1286,9 @@ class Cat(QWidget):
         if self.activity == "sleep":
             self.wake(quiet=True, force=True)
         self._stop_all()
+        if self.toy is not toy:
+            self.ctrl.progress.note("play")
+            self.add_love(1)
         self.activity = "play"
         self.toy = toy
         self.perch = None
@@ -1245,10 +1439,13 @@ class Cat(QWidget):
     def set_scale(self, scale):
         bottom = self.y() + self.height()
         self._save("scale", scale)
-        if self.indoor is not None:          # 在房間裡就先維持房間的大小，出來再換
-            return
         self.scale = scale
         self._build_frames()
+        if self.indoor is not None:              # 在房間裡：站回地板上
+            house = self.indoor
+            lo, hi = house.indoor_x_range(self)
+            self._move_to(max(lo, min(hi, self.x())), house.indoor_floor_y(self), clamp=False)
+            return
         self._move_to(self.x(), bottom - self.height())
         if self.mode == "windows":
             self.perch = None

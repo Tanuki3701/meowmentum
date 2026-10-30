@@ -32,8 +32,10 @@ HATS = {
               "...KOOOOK..", "KKKKKKKKKKK"],
     "santa": [".......KWK", ".....KKRK.", "...KKRRRK.", "..KRRRRRK.", ".KRRRRRRK.",
               "KWWWWWWWWK", "KKKKKKKKKK"],
+    "star": ["...K...", "..KYK..", "KKYXYKK", ".KYYYK.", "..KYK..", ".KYKYK.", ".KK.KK."],
+    "halo": [".KKKKK.", "KXYYYXK", ".KKKKK."],
 }
-HAT_SINK = {"party": 1, "crown": 1, "flower": -1, "beanie": 2, "witch": 1, "santa": 2}
+HAT_SINK = {"party": 1, "crown": 1, "flower": -1, "beanie": 2, "witch": 1, "santa": 2, "star": -1, "halo": -3}
 HAT_DX = {"flower": 3}
 
 # 脖子：front（正面／背面）和 side（側面，面向右）兩種
@@ -44,6 +46,10 @@ NECKS = {
               "side": ["KQ.....", "KQQ....", "KQQQ...", ".KQQQK.", "..KQQK.", "..KQK..", "..KqK..", "...K..."]},
     "bowtie": {"front": ["KK...KK", "KPKKKPK", "KPPYPPK", "KPKKKPK", "KK...KK"],
                "side": [".KK", "KPK", "KYK", "KPK", ".KK"]},
+    "medal": {"front": ["KBK.KRK", ".KBKRK.", "..KBK..", ".KYYYK.", ".KYXYK.", ".KYYYK.", "..KKK.."],
+              "side": ["KB....", ".KB...", "..KBK.", "..KYYK", "..KYXK", "...KK."]},
+    "bandana": {"front": ["KRRRRRRRK", ".KRWRWRK.", "..KRRRK..", "...KRK...", "....K...."],
+                "side": ["KR....", "KRR...", ".KRWR.", "..KRRK", "...KK."]},
 }
 
 # ---------------- 禮物、玩具 ---------------- #
@@ -118,6 +124,36 @@ ICONS = {
     "name": ["............", "............", "KKKKKKKKKK..", "KYYYYYYYYKK.", "KYKKKKYYYYKK",
              "KYYYYYYYKYYK", "KYKKKKKYYYYK", "KYYYYYYYYYKK", "KKKKKKKKKKK.", "............",
              "............", "............"],
+    "up": ["............", ".....KK.....", "....KGGK....", "...KGGGGK...", "..KGGGGGGK..",
+           ".KKKKGGKKKK.", "....KGGK....", "....KGGK....", "....KGGK....", "....KKKK....",
+           "............", "............"],
+    "down": ["............", "............", "....KKKK....", "....KBBK....", "....KBBK....",
+             "....KBBK....", ".KKKKBBKKKK.", "..KBBBBBBK..", "...KBBBBK...", "....KBBK....",
+             ".....KK.....", "............"],
+    "sofa": ["............", "............", "..KKKKKKKK..", ".KPPPPPPPPK.", ".KPHPPPPHPK.",
+             "KKKKKKKKKKKK", "KPKPPPPPPKPK", "KPKHHHHHHKPK", "KPPPPPPPPPPK", "KKKKKKKKKKKK",
+             ".KK......KK.", "............"],
+    "shirt": ["............", "..KKK..KKK..", ".KVVKKKKVVK.", "KVVVVWWVVVVK", "KVKVVVVVVKVK",
+              "KKKVVVVVVKKK", "..KVVVVVVK..", "..KVHVVHVK..", "..KVVVVVVK..", "..KKKKKKKK..",
+              "............", "............"],
+    "cloud": ["............", "............", "....KKK.....", "...KWWWKK...", ".KKWWWWWWK..",
+              "KWWWWWWWWWK.", "KWWWWWWWWWWK", ".KKKKKKKKKK.", "..u..u..u...", ".u..u..u....",
+              "............", "............"],
+    "badge": ["............", "..KKK..KKK..", "..KRK..KBK..", "...KRKKBK...", "....KKKK....",
+              "...KYYYYK...", "..KYXYYXYK..", "..KYYXXYYK..", "..KYXYYXYK..", "...KYYYYK...",
+              "....KKKK....", "............"],
+    "diary": ["............", ".KKKKKKKKK..", ".KHKWWWWWWK.", ".KHKWKKKKWK.", ".KHKWWWWWWK.",
+              ".KHKWKKKWWK.", ".KHKWWWWWWK.", ".KHKWKKKKWK.", ".KHKWWWWWWK.", ".KKKKKKKKKK.",
+              "............", "............"],
+    "sound": ["............", ".....K......", "....KK...K..", "KKKKWK.K..K.", "KWWWWK..K.K.",
+              "KWWWWK..K.K.", "KWWWWK..K.K.", "KKKKWK.K..K.", "....KK...K..", ".....K......",
+              "............", "............"],
+    "heart": ["............", "............", ".KKK...KKK..", "KRRRK.KRRRK.", "KRWRRKRRRRK.",
+              "KRRRRRRRRRK.", ".KRRRRRRRK..", "..KRRRRRK...", "...KRRRK....", "....KRK.....",
+              ".....K......", "............"],
+    "calendar": ["............", "..K.....K...", ".KKKKKKKKKK.", ".KRRRRRRRRK.", ".KKKKKKKKKK.",
+                 ".KWWWWWWWWK.", ".KWKWKWKWWK.", ".KWWWWWWWWK.", ".KWKWKWRWWK.", ".KWWWWWWWWK.",
+                 ".KKKKKKKKKK.", "............"],
 }
 
 

@@ -52,6 +52,15 @@ WALK_GROUPS = [([(f * FRAME_W, d * FRAME_H, FRAME_W, FRAME_H) for f in range(FRA
                for d in range(4)]
 SLEEP_GROUPS = [([(i * FRAME_W, 0, FRAME_W, FRAME_H) for i in range(2)], False)]
 EXPR_GROUPS = [([(i * FRAME_W, 0, FRAME_W, FRAME_H)], False) for i in range(len(EXPRESSIONS))]
+# 新動作（base_pose.png 的順序，和 tools/make_sprites.py 的 POSE_ORDER 一樣）
+POSES = [("sit", 2), ("stretch", 1), ("wash", 2), ("yawn", 1), ("loaf", 2), ("belly", 2)]
+POSE_HEAD = {"sit": (-3, 0), "stretch": (2, 8), "wash": (-3, 0), "yawn": (-3, 0), "loaf": (-2, 8),
+             "belly": (-1, 9)}
+POSE_GROUPS = []
+_i = 0
+for _name, _n in POSES:
+    POSE_GROUPS.append(([((_i + k) * FRAME_W, 0, FRAME_W, FRAME_H) for k in range(_n)], False))
+    _i += _n
 FACE_GROUPS = [([(0, 0, 16, 14)], False), ([(16, 0, 10, 8)], False), ([(26, 0, 6, 5)], False)]
 
 
@@ -86,6 +95,8 @@ def _shift(rgb, dl=0.0, ds=0.0, dh=0.0):
 PATTERNS = ["solid", "tabby", "tuxedo", "calico", "spots"]    # 舊版的花紋名稱（設定檔相容用）
 BASES = ["solid", "calico", "spots"]     # 底色花紋（三選一）
 EXTRAS = ["stripes", "white"]            # 可以疊在任何底色上的：虎斑條紋、賓士白
+DETAILS = ["points", "gradient", "ears", "tail"]   # 細節：重點色（暹羅貓）、漸層、耳朵顏色、尾巴顏色
+DETAIL_DEFAULTS = {"points": (92, 64, 52), "gradient": None, "ears": (70, 60, 66), "tail": (70, 60, 66)}
 PATTERN_DEFAULTS = {          # 花紋的預設顏色（p1、p2）
     "tabby": ((110, 70, 50), None),
     "tuxedo": ((246, 244, 240), None),
@@ -114,7 +125,8 @@ def normalize_look(pattern="solid", p1=None, p2=None, stripes=None, white=None):
     return base, p1, p2, stripes, white
 
 
-def derive_spec(fur, eye=None, pattern="solid", p1=None, p2=None, stripes=None, white=None, eye2=None):
+def derive_spec(fur, eye=None, pattern="solid", p1=None, p2=None, stripes=None, white=None, eye2=None,
+                points=None, gradient=None, ears=None, tail=None):
     """從毛色、眼睛顏色（可以兩眼不同）和花紋推出整組像素調色盤。
 
     花紋可以自由組合：底色花紋（純色 / 三花 / 斑點）上面還能再加虎斑條紋和賓士白。
@@ -136,6 +148,21 @@ def derive_spec(fur, eye=None, pattern="solid", p1=None, p2=None, stripes=None, 
     if white:
         layers.append("white")
         sp["T"], sp["t"] = tuple(white), _shift(tuple(white), 0.05, 0.0)
+    if gradient:                                  # 漸層：背上的顏色慢慢接到原本的毛色
+        layers.append("gradient")
+        g = tuple(gradient)
+        sp["Ga"] = g
+        sp["Gb"] = tuple((a + b) // 2 for a, b in zip(g, sp["M"]))
+    if points:
+        layers.append("points")
+        pt = tuple(points)
+        sp["Pt"], sp["Pl"], sp["Pd"] = pt, _shift(pt, 0.08, 0.02), _shift(pt, -0.12)
+    if ears:
+        layers.append("ears")
+        sp["Er"], sp["Ed"] = tuple(ears), _shift(tuple(ears), -0.12)
+    if tail:
+        layers.append("tail")
+        sp["Tl"], sp["Td"] = tuple(tail), _shift(tuple(tail), -0.12)
     if layers:
         sp["pattern"] = tuple(layers)
     if eye2 and tuple(eye2) != tuple(eye or INK):
@@ -179,6 +206,9 @@ def _recolor(img, sp, groups=None):
         table.append(QColor(*sp.get(ch, sp["M"])).rgba())
     table.append(QColor(*sp.get("E2", sp["E"])).rgba())      # 17、18：另一隻眼睛
     table.append(QColor(*sp.get("F2", sp["F"])).rgba())
+    for ch, fb in (("Pt", "M"), ("Pl", "L"), ("Pd", "D"), ("Ga", "M"), ("Gb", "M"),
+                   ("Er", "M"), ("Ed", "D"), ("Tl", "M"), ("Td", "D")):   # 19~27：細節
+        table.append(QColor(*sp.get(ch, sp[fb])).rgba())
     if (sp.get("pattern") or "E2" in sp) and groups:
         out = _apply_pattern(out, sp, groups)
     table += [0] * (max(out.colorCount(), 256) - len(table))
@@ -190,6 +220,35 @@ def _recolor(img, sp, groups=None):
 _M, _L = SEM.index("M"), SEM.index("L")
 _E, _F = SEM.index("E"), SEM.index("F")
 _A, _Aa, _B, _Bb, _S, _T, _Tt, _E2, _F2 = 10, 11, 12, 13, 14, 15, 16, 17, 18
+_Pt, _Pl, _Pd, _Ga, _Gb, _Er, _Ed, _Tl, _Td = 19, 20, 21, 22, 23, 24, 25, 26, 27
+_D = SEM.index("D")
+_PINK = SEM.index("P")
+
+
+def _regions(img, rx, ry, rw, rh, top, bot):
+    """找出一格圖裡的臉、耳朵、腳掌和尾巴（給重點色、耳朵和尾巴顏色用）。"""
+    pix = [(x, y) for y in range(rh) for x in range(rw) if img.pixelIndex(rx + x, ry + y)]
+    if not pix:
+        return set(), set(), set()
+    pink = [(x, y) for x, y in pix if img.pixelIndex(rx + x, ry + y) == _PINK and y < rh * 0.8]
+    if pink:
+        ey = min(y for _, y in pink)
+        ear_px = [x for x, y in pink if y <= ey + 2]
+        hx, hy = sum(ear_px) / len(ear_px), ey + 5
+        ear_top = ey - 2
+    else:                                          # 背面：看不到臉，用最上面的那幾排當耳朵
+        ear_top = min(y for _, y in pix)
+        xs = [x for x, y in pix if y <= ear_top + 3]
+        hx, hy = sum(xs) / len(xs), ear_top + 6
+    face, ears, tail = set(), set(), set()
+    for x, y in pix:
+        if ((x - hx) / 5.2) ** 2 + ((y - hy) / 4.6) ** 2 <= 1:
+            face.add((x, y))
+        if ear_top <= y <= ear_top + 3 and abs(x - hx) <= 6.5:
+            ears.add((x, y))
+        if 0 <= x < len(top) and bot[x] >= 0 and bot[x] - top[x] <= 6 and abs(x - hx) > 9:
+            tail.add((x, y))
+    return face, ears, tail
 
 
 def _noise(x, y, g, salt):
@@ -245,6 +304,7 @@ def _apply_pattern(img, sp, groups):
     layers = sp.get("pattern") or ()
     if isinstance(layers, str):
         layers = (layers,)
+    detail = any(k in layers for k in ("points", "ears", "tail"))
     for rects, mirror in groups:
         if layers:
             # 每一欄毛的上下範圍（取同組所有格子的聯集，走路時花紋才不會跳）
@@ -257,6 +317,7 @@ def _apply_pattern(img, sp, groups):
                             top[x] = min(top[x], y)
                             bot[x] = max(bot[x], y)
             for rx, ry, rw, rh in rects:
+                face, ears, tail = _regions(img, rx, ry, rw, rh, top, bot) if detail else (set(), set(), set())
                 for x in range(rw):
                     if bot[x] < 0:
                         continue
@@ -264,11 +325,24 @@ def _apply_pattern(img, sp, groups):
                     nx = (rw - 1 - x) if mirror else x
                     for y in range(rh):
                         idx = img.pixelIndex(rx + x, ry + y)
+                        if idx == _D and detail:          # 深色的輪廓陰影也跟著換
+                            if "tail" in layers and (x, y) in tail:
+                                img.setPixel(rx + x, ry + y, _Td)
+                            elif "ears" in layers and (x, y) in ears:
+                                img.setPixel(rx + x, ry + y, _Ed)
+                            elif "points" in layers and ((x, y) in face or (x, y) in ears or (x, y) in tail):
+                                img.setPixel(rx + x, ry + y, _Pd)
+                            continue
                         if idx not in (_M, _L):
                             continue
                         v = (y - top[x]) / span          # 0 = 這一欄最上面，1 = 最下面（肚子、腳）
                         light = idx == _L
                         new = None
+                        if "gradient" in layers:
+                            if v < 0.3:
+                                new = _Ga
+                            elif v < 0.5:
+                                new = _Gb
                         if "calico" in layers and v < 0.7:
                             if _noise(nx, y, 5.0, 7) > 0.56:
                                 new = _Aa if light else _A
@@ -278,8 +352,14 @@ def _apply_pattern(img, sp, groups):
                             new = _Aa if light else _A
                         if "stripes" in layers and v < 0.72 and (nx + y // 3) % 3 == 0:
                             new = _S
+                        if "points" in layers and ((x, y) in face or (x, y) in ears or (x, y) in tail or v > 0.86):
+                            new = _Pl if light else _Pt
                         if "white" in layers and v > 0.58:
                             new = _Tt if light else _T
+                        if "ears" in layers and (x, y) in ears:
+                            new = _Er
+                        if "tail" in layers and (x, y) in tail:
+                            new = _Tl
                         if new is not None:
                             img.setPixel(rx + x, ry + y, new)
         if "E2" in sp:
@@ -378,7 +458,7 @@ def cat_frames(color, scale, hat=None, neck=None):
             walk.append(row)
         mirror = QTransform().scale(-1, 1)
 
-        def both(name, groups, n, view):
+        def both(name, groups, n, view, anchors=None):
             base = _image(name)
             out = []
             for s_ in (sp, swap_eyes(sp)):       # 鏡像那一組用對調過的眼睛顏色
@@ -386,7 +466,8 @@ def cat_frames(color, scale, hat=None, neck=None):
                 frames = []
                 for i in range(n):
                     fr = img.copy(i * FRAME_W, 0, FRAME_W, FRAME_H)
-                    fr = _dress(fr, _head_anchor(base, i * FRAME_W, 0, view), view, hat, neck)
+                    anc = anchors[i] if anchors else _head_anchor(base, i * FRAME_W, 0, view)
+                    fr = _dress(fr, anc, view, hat, neck)
                     frames.append(fr)
                 out.append(frames)
             return [[_scaled(x, scale) for x in out[0]],
@@ -395,7 +476,18 @@ def cat_frames(color, scale, hat=None, neck=None):
         sleep = both("base_sleep.png", SLEEP_GROUPS, 2, "sleep")
         ex = both("base_expr.png", EXPR_GROUPS, len(EXPRESSIONS), "right")
         expr = {name: [ex[0][i], ex[1][i]] for i, name in enumerate(EXPRESSIONS)}
-        _cache[key] = {"walk": walk, "sleep": sleep, "expr": expr}
+        total = sum(n for _, n in POSES)
+        side = _head_anchor(base_walk, FRAME_W, FRAME_H, "right")
+        anchors = []
+        for name, n in POSES:                   # 頭在每個動作裡的位置（帽子、圍巾跟著頭走）
+            dx, dy = POSE_HEAD[name]
+            anchors += [(side[0] + dx, side[1] + dy)] * n
+        po = both("base_pose.png", POSE_GROUPS, total, "right", anchors)
+        pose, i = {}, 0
+        for name, n in POSES:
+            pose[name] = [po[0][i:i + n], po[1][i:i + n]]
+            i += n
+        _cache[key] = {"walk": walk, "sleep": sleep, "expr": expr, "pose": pose}
     return _cache[key]
 
 

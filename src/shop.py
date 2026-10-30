@@ -50,18 +50,21 @@ def preview(item, kind):
 
 # ---------------- 商店 ---------------- #
 class ShopPanel(PixelPanel):
+    """小魚乾商店：服飾店（帽子、脖子的飾品）和家具店（桌面家具、房間和閣樓的擺設）分開。"""
     W = 360
 
-    def __init__(self, ctrl):
+    def __init__(self, ctrl, kinds=None, title_key="shop_title", icon="shirt"):
         super().__init__()
         self.ctrl = ctrl
+        self.kinds = kinds or progress.WARDROBE
+        self.title_key = title_key
         self.target = None
         self.setFixedWidth(self.W)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(U * 2 + 8, U + 6, U * 2 + 8 + U, U * 2 + 10 + U)
         lay.setSpacing(6)
         self.title = QLabel()
-        lay.addWidget(self._title_bar(art.icon_pm("shop", 2), self.title, self.hide))
+        lay.addWidget(self._title_bar(art.icon_pm(icon, 2), self.title, self.hide))
         coin_row, self.coins = _coin_row()
         self.hint = _label(color=SOFT_HEX)
         coin_row.addStretch()
@@ -87,15 +90,15 @@ class ShopPanel(PixelPanel):
         self.msg = _label(color=SOFT_HEX)
         lay.addWidget(self.msg)
 
-    def open_for(self, cat):
+    def open_for(self, cat, anchor=None):
         self.target = cat
         self.msg.setText("")
         self.refresh()
-        self.place_near(cat)
+        self.place_near(anchor or cat)
 
     def refresh(self):
         pr = self.ctrl.progress
-        self.title.setText(tr("shop_title"))
+        self.title.setText(tr(self.title_key))
         self.coins.setText(tr("coins_n", n=pr.coins))
         self.hint.setText(tr("shop_hint"))
         while self.body_lay.count():
@@ -103,7 +106,7 @@ class ShopPanel(PixelPanel):
             if it.widget():
                 it.widget().deleteLater()
         seasonal = seasons.seasonal_hats()
-        for kind in progress.KINDS:
+        for kind in self.kinds:
             self.body_lay.addSpacing(4)
             self.body_lay.addWidget(_label(tr("kind_" + kind), SOFT_HEX))
             items = [(i, p) for i, (k, p) in progress.ITEMS.items() if k == kind]
@@ -265,13 +268,96 @@ class StatsPanel(PixelPanel):
         self.more = _label(color=SOFT_HEX)
         legend.addWidget(self.more)
         lay.addLayout(legend)
+        # 成就徽章
+        self.badge_title = _label(color=SOFT_HEX)
+        lay.addWidget(self.badge_title)
+        brow = QHBoxLayout()
+        brow.setSpacing(6)
+        self.badge_icons = []
+        for _ in progress.BADGES:
+            ic = QLabel()
+            ic.setFixedSize(30, 30)
+            ic.setAlignment(Qt.AlignCenter)
+            brow.addWidget(ic)
+            self.badge_icons.append(ic)
+        brow.addStretch()
+        lay.addLayout(brow)
+        # 貓咪日記：最近幾天發生的小事
+        self.diary_title = _label(color=SOFT_HEX)
+        lay.addWidget(self.diary_title)
+        self.diary_lines = []
+        for _ in range(4):
+            d = _label()
+            d.setWordWrap(True)
+            lay.addWidget(d)
+            self.diary_lines.append(d)
         coin_row, self.coins = _coin_row()
         coin_row.addStretch()
         lay.addLayout(coin_row)
 
+    @staticmethod
+    def _badge_pm(on):
+        pm = art.icon_pm("badge", 2)
+        if on:
+            return pm
+        img = pm.toImage().convertToFormat(pm.toImage().Format.Format_ARGB32)
+        for y in range(img.height()):
+            for x in range(img.width()):
+                c = img.pixelColor(x, y)
+                if c.alpha():
+                    g = int(c.red() * 0.3 + c.green() * 0.59 + c.blue() * 0.11)
+                    g = 150 + (g - 150) // 3
+                    img.setPixelColor(x, y, QColor(g, g - 6, g - 14, 150))
+        from PySide6.QtGui import QPixmap
+        out = QPixmap.fromImage(img)
+        out.setDevicePixelRatio(pm.devicePixelRatio())
+        return out
+
+    def diary_text(self, day):
+        pr = self.ctrl.progress
+        d = pr.diary.get(day.isoformat(), {})
+        parts = []
+        mins = pr.day(day)[0]
+        if mins:
+            parts.append(tr("diary_focus", n=mins))
+        for k in ("can", "pet", "play", "groom", "gift"):
+            if d.get(k):
+                parts.append(tr("diary_" + k, n=d[k]))
+        if not parts:
+            return None
+        sep = "，" if i18n.lang() == "zh" else ", "
+        text = sep.join(parts)
+        return text[0].upper() + text[1:] if i18n.lang() == "en" else text
+
     def refresh(self):
         pr = self.ctrl.progress
         self.title.setText(tr("stats_title"))
+        got = 0
+        for ic, (bid, _icon, reward) in zip(self.badge_icons, progress.BADGES):
+            on = bid in pr.badges
+            got += on
+            ic.setPixmap(self._badge_pm(on))
+            tip = tr("badge_" + bid) + "  ·  " + tr("badge_" + bid + "_how")
+            if reward:
+                tip += "  ·  " + tr("item_" + reward)
+            ic.setToolTip(tip)
+        self.badge_title.setText(tr("stat_badges", n=got, t=len(progress.BADGES)))
+        self.diary_title.setText(tr("stat_diary"))
+        today = dt.date.today()
+        lines = []
+        for back in range(0, 14):
+            day = today - dt.timedelta(days=back)
+            text = self.diary_text(day)
+            if text:
+                lines.append(f"{day.month}/{day.day}  {text}")
+            if len(lines) >= 4:
+                break
+        if not lines:
+            lines = [tr("diary_empty")]
+        for lab, text in zip(self.diary_lines, lines + [""] * 4):
+            lab.setText(text)
+            lab.setVisible(bool(text))
+        self.adjustSize()
         m, n = pr.day(dt.date.today())
         total_m, total_n = pr.totals()
         vals = [(tr("n_min_short", m=m), tr("stat_today")),

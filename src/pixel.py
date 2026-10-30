@@ -400,3 +400,71 @@ def draw_tail(p, cx, top, u=2, fill=PAPER, ink=INK):
             p.fillRect(QRect(cx - inner * u, y, 2 * inner * u, u), fill)
     p.fillRect(QRect(cx - 4 * u, top, u, u), ink)
     p.fillRect(QRect(cx + 3 * u, top, u, u), ink)
+
+
+# ---------------- 選單列的小貓（跟著季節戴上小配件） ---------------- #
+TRAY_CAT = [
+    "OO........OO",
+    "OOO......OOO",
+    "OOOOOOOOOOOO",
+    "OOOOOOOOOOOO",
+    "OO..OOOO..OO",
+    "OO..OOOO..OO",
+    "OOOOO..OOOOO",
+    "OOOOOOOOOOOO",
+    ".OOOOOOOOOO.",
+    "..OOOOOOOO..",
+]
+
+
+def tray_icon(season=None):
+    """單色的貓臉（macOS 會依深淺色自動上色）：春天耳朵上一朵花、夏天墨鏡、秋天圍巾、冬天毛線帽。"""
+    key = ("tray", season)
+    if key in _cache:
+        return _cache[key]
+    px = set()
+    for y, row in enumerate(TRAY_CAT):
+        for x, ch in enumerate(row):
+            if ch == "O":
+                px.add((3 + x, 4 + y))
+    if season == "winter":                       # 毛線帽蓋住耳朵，上面一顆毛球
+        px -= {(x, y) for x in range(18) for y in range(0, 6)}
+        for y, (x0, x1) in enumerate(((8, 9), (7, 10), (5, 12), (4, 13), (3, 14), (3, 14)), start=0):
+            for x in range(x0, x1 + 1):
+                px.add((x, y + 1))
+        for x in range(3, 15, 2):                 # 帽沿的花紋
+            px.discard((x, 5))
+    elif season == "spring":                     # 左耳上的小花
+        flower = ["..O..", ".OOO.", "OO.OO", ".OOO.", "..O.."]
+        for y, row in enumerate(flower):
+            for x, ch in enumerate(row):
+                (px.add if ch == "O" else px.discard)((x + 1, y + 1))
+    elif season == "summer":                     # 草帽：寬寬的帽沿
+        px -= {(x, y) for x in range(18) for y in range(0, 6)}
+        for y, (x0, x1) in enumerate(((6, 11), (5, 12), (5, 12), (5, 12)), start=1):
+            for x in range(x0, x1 + 1):
+                px.add((x, y))
+        for x in range(5, 13):
+            px.discard((x, 3))                   # 帽子上的緞帶
+        for x in range(0, 18):
+            px.add((x, 5))
+        px.discard((0, 5)); px.discard((17, 5))
+    elif season == "autumn":                     # 圍巾：下巴下面一圈，尾巴垂下來
+        for x in range(3, 15):
+            px.add((x, 14))
+            px.add((x, 15))
+        for x, y in ((11, 16), (12, 16), (11, 17), (12, 17)):
+            px.add((x, y))
+        for x in range(4, 14, 3):
+            px.discard((x, 15))
+    img = QImage(36, 36, QImage.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    for x, y in px:
+        if 0 <= x < 18 and 0 <= y < 18:
+            p.fillRect(x * 2, y * 2, 2, 2, QColor(0, 0, 0))
+    p.end()
+    icon = QIcon(QPixmap.fromImage(img))
+    icon.setIsMask(True)
+    _cache[key] = icon
+    return icon

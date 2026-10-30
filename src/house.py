@@ -10,7 +10,7 @@ import math
 import random
 import time
 
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -38,13 +38,91 @@ SNOW_SHADE = QColor(212, 230, 250)
 ICE = QColor(186, 228, 255)
 SNOW_EDGE = QColor(150, 176, 214)
 
-# 兩種樣子的尺寸：(寬, 高, 草地頂端, 煙囪口, 花叢位置)
+TREE_PAD = 24              # 外面看時，左邊多留一塊地方種四季的樹
+
+# 三種樣子的尺寸：(寬, 高, 草地頂端, 煙囪口, 花叢位置, 左邊多留的寬度)
 VIEWS = {
     "outside": dict(w=AW, h=AH, ground=GROUND, chimney=sprites.HOUSE_CHIMNEY,
-                    bushes=[(4, 18), (AW - 22, AW - 4)]),
+                    bushes=[(4, 18), (AW - 22, AW - 4)], pad=TREE_PAD, tree=(-21, -2)),
     "inside": dict(w=interior.IW, h=interior.IH, ground=interior.GRASS, chimney=interior.CHIMNEY,
-                   bushes=[(0, 12), (interior.IW - 12, interior.IW)]),
+                   bushes=[(0, 12), (interior.IW - 12, interior.IW)], pad=0),
+    "attic": dict(w=interior.IW, h=interior.AH, ground=interior.AH, chimney=interior.A_CHIMNEY,
+                  bushes=[], pad=0),
 }
+INTERIOR = ("inside", "attic")
+SEASON_LEAF = {                # 四季飄落的東西：春天櫻花、夏天花瓣、秋天楓葉、冬天雪花
+    "autumn": [QColor(232, 72, 52), QColor(246, 120, 46), QColor(252, 176, 52), QColor(196, 58, 58)],
+}
+TREE_COLORS = {                # 樹冠：(輪廓, 主色, 暗色, 亮色)
+    "spring": ((58, 55, 55), (255, 182, 206), (236, 132, 170), (255, 226, 236)),
+    "summer": ((58, 55, 55), (92, 186, 92), (56, 140, 76), (156, 222, 110)),
+    "autumn": ((58, 55, 55), (238, 104, 52), (196, 62, 52), (255, 186, 72)),
+    "plain": ((58, 55, 55), (108, 198, 96), (64, 150, 84), (172, 228, 112)),
+}
+CANOPY = [
+    "........KKKK.KKK.......",
+    "......KKbbbAKbbAKK.....",
+    "....KKbbAAAAAAAAAAK....",
+    "...KbbAAAAAaAAAbAAAK...",
+    "..KbAAAAbAAAAAAAAAAAK..",
+    ".KbAAaAAAAAAAaAAAAaAAK.",
+    ".KAAAAAAAAbAAAAAAAAAAK.",
+    "KbAAAAaAAAAAAAbAAAaAAAK",
+    "KAAAbAAAAAAaAAAAAAAAAAK",
+    "KAAAAAAAAAAAAAAAAbAAAaK",
+    "KAaAAAAAbAAAAAAaAAAAAAK",
+    ".KAAAAAAAAAAAAAAAAAaAK.",
+    ".KaAAAaAAAAbAAAAAAAAAK.",
+    "KAAAAAAAAAAAAAAAaAAAAAK",
+    "KaAAAAAaAAAAAAAAAAAaAaK",
+    ".KaaAAAAAAAaAAAAAaaaaK.",
+    "..KKaaaaKaaaaaKaaaaKK..",
+    "....KKKK.KKKKK.KKKK....",
+]
+TRUNK = [                      # 樹幹（從樹冠下面長到草地）
+    "...KDDK...",
+    "...KDdK...",
+    "..KDDdK...",
+    "..KDdDK.K.",
+    "..KDDdKKdK",
+    "..KDdDDdK.",
+    "..KDDdDK..",
+    "..KDdDDK..",
+    "..KDDdDK..",
+    "..KDdDDK..",
+    ".KDDdDDDK.",
+    "KDdDKKDdDK",
+]
+SNOWMAN = [
+    "...KKK...",
+    "..KWWWK..",
+    ".KWKWKWK.",
+    ".KWWOWWK.",
+    "..KWWWK..",
+    ".KRRRRRK.",
+    "KWWWWWWWK",
+    "KWWWKWWWK",
+    "KWWWWWWWK",
+    "KWWWKWWWK",
+    ".KWWWWWK.",
+    "..KKKKK..",
+]
+LEAF_PILE = [
+    "....KKK......",
+    "..KKOYOKK.KK.",
+    ".KRYOROYOKOYK",
+    "KOROYOROYOROK",
+]
+SUNFLOWER = [
+    ".KYK.",
+    "KYOYK",
+    ".KYK.",
+    "..G..",
+    ".GG..",
+    "..G..",
+    "..GG.",
+    "..G..",
+]
 
 
 def _eye_icon():
@@ -107,6 +185,11 @@ class House(QWidget):
         self.smoke_timer.setTimerType(Qt.CoarseTimer)
         self.smoke_timer.setInterval(1100)
         self.smoke_timer.timeout.connect(self._smoke_tick)
+        self.fx = QTimer(self)                   # 天氣、魚、爐火、風鈴：只有需要時才跑（約 10fps）
+        self.fx.setTimerType(Qt.CoarseTimer)
+        self.fx.timeout.connect(self.update)
+        self._flash_at = 0.0
+        self._star = None                        # 流星：(開始時間, y)
         self.gust = QTimer(self)                 # 每隔幾秒飄一陣花瓣
         self.gust.setSingleShot(True)
         self.gust.setTimerType(Qt.VeryCoarseTimer)
@@ -124,27 +207,39 @@ class House(QWidget):
     def V(self):
         return VIEWS[self.view]
 
+    @property
+    def OX(self):
+        """圖的左邊留白（格）：外面看時多留一塊種樹。"""
+        return MX + self.V.get("pad", 0)
+
+    def is_interior(self):
+        return self.view in INTERIOR
+
+    @property
+    def R(self):
+        return interior.ROOMS[self.view]
+
     def _unit_for(self, view):
-        if view == "inside" and INSIDE_SIZES[self.inside_size]:
+        if view in INTERIOR and INSIDE_SIZES[self.inside_size]:
             return INSIDE_SIZES[self.inside_size]
         return SIZES[self.size_name]
 
     def _resize_for_view(self):
         v = self.V
-        self.setFixedSize((v["w"] + MX * 2) * self.U, (v["h"] + MY) * self.U)
+        self.setFixedSize((v["w"] + MX * 2 + v.get("pad", 0)) * self.U, (v["h"] + MY) * self.U)
 
     def _anchor(self):
         """貓屋的「地面中心點」（換樣子、換大小時保持不動）。"""
         v = self.V
-        return (self.x() + (MX + v["w"] / 2) * self.U, self.y() + (MY + v["ground"]) * self.U)
+        return (self.x() + (self.OX + v["w"] / 2) * self.U, self.y() + (MY + v["ground"]) * self.U)
 
     def _place_at(self, anchor):
         v = self.V
-        x = int(round(anchor[0] - (MX + v["w"] / 2) * self.U))
+        x = int(round(anchor[0] - (self.OX + v["w"] / 2) * self.U))
         y = int(round(anchor[1] - (MY + v["ground"]) * self.U))
         s = QGuiApplication.screenAt(QPoint(int(anchor[0]), int(anchor[1]) - 4)) or QGuiApplication.primaryScreen()
         g = s.availableGeometry()
-        x = max(g.left() - MX * self.U, min(x, g.right() + 1 - self.width() + MX * self.U))  # 整間屋子留在螢幕裡
+        x = max(g.left() - self.OX * self.U, min(x, g.right() + 1 - (self.OX + v["w"]) * self.U))  # 整間屋子留在螢幕裡
         self.move(x, y)
 
     def screen_rect(self):
@@ -161,10 +256,11 @@ class House(QWidget):
             self._schedule_gust(800)
             self.smoke_timer.start()
             self._smoke_tick()
+        self.update_fx()
         self.ctrl.settings.setValue("house_visible", "1")
 
     def hide_house(self):
-        if self.view == "inside":
+        if self.is_interior():
             self.set_view("outside", animate=False)
         if self.residents:
             self.ctrl.come_out()
@@ -172,6 +268,7 @@ class House(QWidget):
         self.gust.stop()
         self.smoke_timer.stop()
         self.anim.stop()
+        self.fx.stop()
         self.petals.clear()
         self.smoke.clear()
         self.ctrl.settings.setValue("house_visible", "0")
@@ -197,10 +294,10 @@ class House(QWidget):
             return
         self.inside_size = name
         self.ctrl.settings.setValue("inside_size", name)
-        if self.view != "inside":
+        if not self.is_interior():
             return
         anchor = self._anchor()
-        self.U = self._unit_for("inside")
+        self.U = self._unit_for(self.view)
         self._resize_for_view()
         self._place_at(anchor)
         self.petals.clear()
@@ -209,15 +306,15 @@ class House(QWidget):
         self.update()
 
     def _rescale_indoor(self):
-        """房間裡的貓咪和房間用同一個像素大小，看起來才像住在裡面。"""
-        for cat in self.residents:
-            if cat.indoor is self:
-                cat.use_room_scale(self.U)
+        """貓屋換大小後，房間裡的貓咪（維持自己的大小）跟著站回地板上。"""
         self._sync_cats()
 
     # ---------------- 外面 ↔ 裡面 ---------------- #
     def toggle_view(self):
         self.set_view("inside" if self.view == "outside" else "outside")
+
+    def go_attic(self):
+        self.set_view("attic")
 
     def set_view(self, view, animate=True):
         if view == self.view:
@@ -251,9 +348,11 @@ class House(QWidget):
         self.petals.clear()
         self.smoke.clear()
         for cat in list(self.residents):
-            if view == "inside" and old == "outside":
+            if view in INTERIOR and old == "outside":
                 self.state.pop(cat, None)
                 cat.enter_indoor(self, from_door=False)
+            elif view in INTERIOR and cat.indoor is self:       # 上下樓：從樓梯口出現
+                cat.enter_indoor(self, from_door=True)
             elif view == "outside" and cat.indoor is self:
                 cat.indoor_to_home(self)
                 self._new_state(cat)
@@ -262,6 +361,7 @@ class House(QWidget):
         else:
             self.timer.stop()
         self.anim.start()
+        self.update_fx()
         self.update()
         for cat in self.residents:
             if cat.indoor is self:
@@ -279,7 +379,7 @@ class House(QWidget):
 
     # ---------------- 給貓咪用的位置 ---------------- #
     def _gx(self, art_x):
-        return self.x() + (MX + art_x) * self.U
+        return self.x() + (self.OX + art_x) * self.U
 
     def _gy(self, art_y):
         return self.y() + (MY + art_y) * self.U
@@ -290,33 +390,40 @@ class House(QWidget):
             dx, dy, dw, dh = sprites.HOUSE_SLOTS["door"]
             cx = dx + dw / 2
         else:
-            cx = interior.ROOM_L - 9
+            cx = self.R["outside_x"]
         x = self._gx(cx) - cat.width() / 2
         y = self._gy(self.V["ground"]) - (cat.height() - cat.foot_off())
         return x, y
 
     def indoor_floor_y(self, cat):
-        return self._gy(interior.IG) - (cat.height() - cat.foot_off())
+        return self._gy(self.R["floor"]) - (cat.height() - cat.foot_off())
 
     def indoor_x_range(self, cat):
-        lo = self._gx(interior.ROOM_L + 8) - cat.width() / 2
-        hi = self._gx(interior.ROOM_R - 8) - cat.width() / 2
+        lo = self._gx(self.R["left"] + 8) - cat.width() / 2
+        hi = self._gx(self.R["right"] - 8) - cat.width() / 2
         return lo, max(lo, hi)
 
     def indoor_spot_x(self, cat, spot):
-        x = {"door": interior.DOOR[0] + interior.DOOR[2] / 2,
-             "cushion": sum(interior.CUSHION_X) / 2,
-             "bowl": interior.BOWL_X[1] + 7}[spot]
+        r = self.R
+        x = {"door": r["door"], "cushion": r["bed"], "bowl": r.get("bowl") or r["bed"],
+             "kotatsu": r.get("kotatsu") or r["bed"]}[spot]
         return self._gx(x) - cat.width() / 2
 
     def room_contains(self, point):
-        """這一點（全域座標）是不是在房間裡面。"""
-        if self.view != "inside":
+        """這一點（全域座標）是不是在房間（或閣樓）裡面。"""
+        if not self.is_interior():
             return False
-        r = QRect(int(self._gx(interior.ROOM_L)), int(self._gy(interior.EAVE + 4)),
-                  int((interior.ROOM_R - interior.ROOM_L) * self.U),
-                  int((interior.IG - interior.EAVE - 2) * self.U))
-        return r.contains(point)
+        r = self.R
+        rect = QRect(int(self._gx(r["left"])), int(self._gy(r["top"])),
+                     int((r["right"] - r["left"]) * self.U), int((r["floor"] + 2 - r["top"]) * self.U))
+        return rect.contains(point)
+
+    def body_contains(self, point):
+        """外面看時，這一點是不是在貓屋上（把貓咪拖過來放開就會回家）。"""
+        if self.view != "outside":
+            return False
+        rect = QRect(int(self._gx(0)), int(self._gy(2)), int(AW * self.U), int((GROUND + 3) * self.U))
+        return rect.contains(point)
 
     def open_door(self):
         """貓咪進出時，門打開一下。"""
@@ -384,16 +491,32 @@ class House(QWidget):
             slow = 2 if self.ctrl.low_power else 1
             self.gust.start(ms if ms is not None else random.randint(2600, 6000) * slow)
 
+    def season(self):
+        return seasons.season() if self.ctrl.seasonal else "plain"
+
     def _gust(self):
+        season = self.season()
         spring = self.ctrl.seasonal and "spring" in seasons.decorations()
         g = self.V["ground"]
-        for _ in range(random.randint(2, 4)):
-            x0, x1 = random.choice(self.V["bushes"])
-            self.petals.append([random.uniform(x0, x1), g - random.uniform(6, 9),
+        sources = list(self.V["bushes"])
+        tree = self.V.get("tree")
+        if not sources:
+            self._schedule_gust()
+            return
+        for _ in range(random.randint(4, 7) if season == "autumn" else random.randint(2, 4)):
+            if tree and season in ("spring", "autumn") and random.random() < (0.75 if season == "autumn" else 0.6):
+                x0, x1 = tree                                   # 從樹冠下緣飄下來
+                y = 30 + random.uniform(0, 8)
+            else:
+                x0, x1 = random.choice(sources)
+                y = g - random.uniform(6, 9)
+            if season == "autumn":
+                color, kind = random.choice(SEASON_LEAF["autumn"]), "leaf"
+            else:
+                color, kind = random.choice(SPRING_COLORS if spring else PETAL_COLORS), "petal"
+            self.petals.append([random.uniform(x0, x1), y,
                                 random.uniform(-0.35, 0.35), random.uniform(-0.45, -0.2),
-                                random.uniform(0, 6.28),
-                                random.choice(SPRING_COLORS if spring else PETAL_COLORS),
-                                random.randint(50, 80)])
+                                random.uniform(0, 6.28), color, random.randint(60, 95), kind])
         self.anim.start()
         self._schedule_gust()
 
@@ -414,7 +537,7 @@ class House(QWidget):
             pt[1] += pt[3] * k
             pt[6] -= k
         self.petals = [p for p in self.petals
-                       if p[6] > 0 and -MX < p[0] < self.V["w"] + MX and p[1] < g + 2]
+                       if p[6] > 0 and -self.OX < p[0] < self.V["w"] + MX and p[1] < g + 2]
         for s in self.smoke:
             s[0] += (0.16 + math.sin(s[3] * 0.3) * 0.1) * k
             s[1] -= 0.34 * k
@@ -428,7 +551,7 @@ class House(QWidget):
     # ---------------- 繪圖 ---------------- #
     def _art_rect(self, x, y, w, h):
         u = self.U
-        return QRect(int(round((MX + x) * u)), int(round((MY + y) * u)), max(1, int(round(w * u))),
+        return QRect(int(round((self.OX + x) * u)), int(round((MY + y) * u)), max(1, int(round(w * u))),
                      max(1, int(round(h * u))))
 
     def _px(self, p, x, y, color, w=1, h=1):
@@ -450,26 +573,51 @@ class House(QWidget):
                     d = math.hypot(i, j)
                     if d <= r:
                         self._px(p, int(round(x)) + i, int(round(y)) + j, edge if d > r - 1.0 else fill)
+        weather = self.ctrl.weather.kind if getattr(self.ctrl, "weather", None) else None
+        owned = self.ctrl.progress.owned
         if self.view == "inside":
-            p.drawPixmap(MX * u, MY * u, interior.dollhouse(self.ctrl.progress.owned, phase, deco, u))
+            p.drawPixmap(self.OX * u, MY * u, interior.dollhouse(owned, phase, deco, u, weather))
             if "snow" in deco:
                 self._paint_snow(p, _inside_roof(), (interior.CHIMNEY[0] - 4, 0, 9),
                                  [(-4, interior.GRASS - 8, True, False), (interior.IW - 14, interior.GRASS - 8, True, True)],
                                  interior.GRASS, interior.IW, [], icicles=(6, 18, 30, 73, 88, 97), eave=interior.EAVE + 1)
+            wx, wy, ww, wh = interior.WINDOW
+            self._paint_window_fx(p, weather, phase, (wx, wy, ww, wh), None)
+            if "fishtank" in owned:
+                self._paint_fish(p)
+        elif self.view == "attic":
+            p.drawPixmap(self.OX * u, MY * u, interior.attic(owned, phase, deco, u, weather))
+            if "snow" in deco:
+                self._paint_snow(p, interior.attic_roof_rows(), (interior.A_CHIM[0], interior.A_CHIMNEY[1], 9),
+                                 [], interior.AH, 0, [], icicles=(4, 14, 89, 99), eave=51)
+            cx, cy, r = interior.A_WINDOW
+            self._paint_window_fx(p, weather, phase, (cx - r, cy - r, r * 2, r * 2),
+                                  lambda x, y: (x - cx + 0.5) ** 2 + (y - cy + 0.5) ** 2 <= (r - 1.5) ** 2)
+            if "fireplace" in owned and self._fire_lit(phase):
+                self._paint_fire(p)
         else:
+            self._paint_season(p, phase, deco, back=True)
             self._paint_outside(p, phase, deco)
+            self._paint_season(p, phase, deco, back=False)
+            self._paint_weather_outside(p, weather)
         # 花瓣（畫在最前面）
-        for x, y, _vx, _vy, ph, color, life in self.petals:
+        for x, y, _vx, _vy, ph, color, life, *rest in self.petals:
             c = QColor(color)
             c.setAlpha(255 if life > 10 else int(255 * life / 10))
             flip = math.sin(ph)                          # 翻轉：2x2 → 2x1 → 1x1
-            w, h = (2, 2) if flip > 0.35 else ((2, 1) if flip > -0.4 else (1, 1))
-            self._px(p, int(round(x)), int(round(y)), c, w, h)
+            ix, iy = int(round(x)), int(round(y))
+            if rest and rest[0] == "leaf" and flip > -0.2:                 # 楓葉：小小的星形
+                self._px(p, ix, iy - 1, c)
+                self._px(p, ix - 1, iy, c, 3, 1)
+                self._px(p, ix, iy + 1, c.darker(125))
+            else:
+                w, h = (2, 2) if flip > 0.35 else ((2, 1) if flip > -0.4 else (1, 1))
+                self._px(p, ix, iy, c, w, h)
 
     def _paint_outside(self, p, phase, deco):
         u = self.U
         # 門窗平常關著；有貓咪待著的那一格才打開（貓咪進出時，門也會開一下）
-        p.drawPixmap(MX * u, MY * u, sprites.house(u, closed=True))
+        p.drawPixmap(self.OX * u, MY * u, sprites.house(u, closed=True))
         opened = sprites.house(u)
         dpr = opened.devicePixelRatio()
         used = {st["slot"] for st in self.state.values()}
@@ -530,6 +678,224 @@ class House(QWidget):
             if key != "attic":
                 self._px(p, x, y + h // 2, frame, w, 1)
 
+    # ---------------- 四季 ---------------- #
+    def _paint_grid(self, p, x, y, grid, colors, flip=False):
+        for gy, row in enumerate(grid):
+            row = row[::-1] if flip else row
+            for gx, ch in enumerate(row):
+                if ch != "." and ch in colors:
+                    self._px(p, x + gx, y + gy, colors[ch])
+
+    def _paint_season(self, p, phase, deco, back):
+        """外面看：房子左邊有一棵會跟著季節變的樹，春天櫻花、夏天綠葉和向日葵、秋天楓葉、冬天雪人。"""
+        season = self.season()
+        if self.view != "outside":
+            return
+        ink = QColor(58, 55, 55)
+        night = phase == "night"
+        dim = (lambda c: c.darker(135)) if night else (lambda c: c)    # noqa: E731
+        if back:
+            # 樹下的草地（接上房子的草地）
+            g0 = -TREE_PAD + 1
+            self._px(p, g0, GROUND, ink, -g0 + 1, 4)
+            self._px(p, g0 + 1, GROUND, dim(QColor(108, 198, 96)), -g0, 3)
+            self._px(p, g0 + 1, GROUND + 2, dim(QColor(64, 150, 84)), -g0, 1)
+            for gx in range(g0 + 2, 0, 3):
+                self._px(p, gx, GROUND, dim(QColor(172, 228, 112)))
+            # 樹幹
+            bark = {"K": ink, "D": dim(QColor(160, 108, 72)), "d": dim(QColor(120, 80, 55))}
+            self._paint_grid(p, -15, GROUND - 12, TRUNK, bark)
+            if season == "winter":
+                # 光禿禿的枝枒，上面積一點雪
+                trunk = dim(QColor(150, 98, 66))
+                self._px(p, -13, 24, ink, 5, GROUND - 12 - 24)
+                self._px(p, -12, 24, trunk, 3, GROUND - 12 - 24)
+                for bx, by, bw in ((-20, 30, 8), (-9, 27, 8), (-18, 24, 6), (-8, 33, 6), (-15, 20, 5)):
+                    self._px(p, bx, by, ink, bw, 2)
+                    self._px(p, bx + 1, by, trunk, bw - 2, 1)
+                    self._px(p, bx, by - 1, QColor(255, 255, 255), bw - 1, 1)
+                self._px(p, -12, 23, QColor(255, 255, 255), 3, 1)
+            else:
+                k, a, d, l_ = TREE_COLORS[season if season in TREE_COLORS else "plain"]
+                cols = {"K": QColor(*k), "A": dim(QColor(*a)), "a": dim(QColor(*d)), "b": dim(QColor(*l_))}
+                self._paint_grid(p, -22, 21, CANOPY, cols)
+                if season == "spring":                       # 白色的小花
+                    for fx, fy in ((-17, 25), (-8, 28), (-13, 32), (-5, 24), (-19, 33), (-10, 23)):
+                        self._px(p, fx, fy, QColor(255, 255, 255))
+                elif season == "autumn":                     # 幾片黃葉
+                    for fx, fy in ((-16, 27), (-7, 30), (-12, 34)):
+                        self._px(p, fx, fy, QColor(255, 214, 84))
+            return
+        if season == "autumn":
+            cols = {"K": QColor(58, 55, 55), "O": QColor(246, 120, 46), "Y": QColor(252, 176, 52),
+                    "R": QColor(222, 72, 52)}
+            self._paint_grid(p, -23, GROUND - 4, LEAF_PILE, cols)
+        elif season == "winter":
+            cols = {"K": QColor(58, 55, 55), "W": QColor(255, 255, 255), "O": QColor(255, 150, 60),
+                    "R": QColor(232, 72, 72)}
+            self._paint_grid(p, -24, GROUND - 12, SNOWMAN, cols)
+        elif season == "summer":
+            cols = {"K": QColor(58, 55, 55), "Y": QColor(255, 214, 70), "O": QColor(150, 96, 60),
+                    "G": QColor(64, 150, 84)}
+            for i, x in enumerate((AW - 9, AW - 4, -23)):
+                self._paint_grid(p, x, GROUND - 13 + (i % 2) * 2, SUNFLOWER, cols)
+            # 屋簷下的風鈴，輕輕搖
+            sway = int(round(math.sin(time.monotonic() * 2.4)))
+            self._px(p, 7, 26, QColor(58, 55, 55), 1, 3)
+            self._px(p, 6, 29, QColor(58, 55, 55), 3, 3)
+            self._px(p, 7, 29, QColor(186, 228, 255), 1, 2)
+            self._px(p, 7 + sway, 32, QColor(58, 55, 55), 1, 2)
+            self._px(p, 7 + sway, 34, QColor(255, 132, 176), 1, 3)
+
+    # ---------------- 天氣、魚、爐火 ---------------- #
+    def _fire_lit(self, phase):
+        return phase in ("dusk", "night") or seasons.season() == "winter"
+
+    def need_fx(self):
+        if not self.isVisible():
+            return False
+        w = getattr(self.ctrl, "weather", None)
+        if w and w.kind in ("rain", "storm", "snow", "fog"):
+            return True
+        owned = self.ctrl.progress.owned
+        if self.view == "inside" and "fishtank" in owned:
+            return True
+        if self.view == "attic" and "fireplace" in owned and self._fire_lit(seasons.phase()):
+            return True
+        if self.view == "outside" and self.season() == "summer":
+            return True
+        if self.is_interior() and seasons.phase() == "night":
+            return True                                      # 偶爾有流星
+        return False
+
+    def update_fx(self):
+        if self.need_fx():
+            self.fx.start(200 if self.ctrl.low_power else 100)
+        else:
+            self.fx.stop()
+        self.update()
+
+    def _paint_window_fx(self, p, weather, phase, rect, clip):
+        """窗戶裡的天氣：雨絲、雪花、起霧、閃電，晚上偶爾有流星劃過。"""
+        x0, y0, w, h = rect
+        t = time.monotonic()
+        inside = (lambda x, y: x0 <= x < x0 + w and y0 <= y < y0 + h) if clip is None else clip
+        if weather in ("rain", "storm"):
+            col = QColor(220, 236, 255, 190)
+            for i in range(9):
+                x = x0 + (i * 7.3 + t * 9) % w
+                y = y0 + (i * 5.1 + t * 26) % h
+                for k in range(2):
+                    px, py = int(x - k * 0.5), int(y + k)
+                    if inside(px, py):
+                        self._px(p, px, py, col)
+        elif weather == "snow":
+            for i in range(7):
+                x = x0 + (i * 6.7 + math.sin(t * 1.3 + i) * 1.2) % w
+                y = y0 + (i * 4.3 + t * 4) % h
+                if inside(int(x), int(y)):
+                    self._px(p, int(x), int(y), QColor(255, 255, 255))
+        if weather == "fog" or weather in ("rain", "storm", "snow"):
+            a = 70 if weather == "fog" else 30
+            for yy in range(y0, y0 + h):                     # 玻璃起霧
+                for xx in range(x0, x0 + w):
+                    if inside(xx, yy) and (weather == "fog" or (xx + yy) % 3 == 0 and yy > y0 + h * 0.55):
+                        self._px(p, xx, yy, QColor(255, 255, 255, a))
+        if weather == "storm" and self._flash(t):
+            for yy in range(y0, y0 + h):
+                for xx in range(x0, x0 + w):
+                    if inside(xx, yy):
+                        self._px(p, xx, yy, QColor(255, 255, 255, 150))
+        if phase == "night" and weather in (None, "clear"):
+            if self._star is None and random.random() < 0.004:
+                self._star = (t, y0 + random.uniform(1, h * 0.5))
+            if self._star is not None:
+                k = (t - self._star[0]) / 0.8
+                if k > 1:
+                    self._star = None
+                else:
+                    sx = x0 + w - k * (w + 4)
+                    sy = self._star[1] + k * 4
+                    for j in range(3):
+                        px, py = int(sx + j), int(sy - j * 0.4)
+                        if inside(px, py):
+                            self._px(p, px, py, QColor(255, 250, 220, 255 - j * 70))
+
+    def _flash(self, t):
+        if t > self._flash_at + 7:
+            self._flash_at = t + random.uniform(0, 5)
+        return 0 <= t - self._flash_at < 0.18
+
+    def _paint_weather_outside(self, p, weather):
+        if weather not in ("rain", "storm", "snow", "fog"):
+            return
+        t = time.monotonic()
+        left, right = -self.V.get("pad", 0) - 4, self.V["w"] + 4
+        top, g = -MY + 2, self.V["ground"]
+        span_x, span_y = right - left, g - top
+        if weather in ("rain", "storm"):
+            col = QColor(120, 170, 235, 210)
+            for i in range(40 if weather == "storm" else 32):
+                x = left + (i * 13.7 + t * 6) % span_x
+                y = top + (i * 9.3 + t * 40) % span_y
+                self._px(p, int(x), int(y), col, 1, 2)
+            for i, ex in enumerate((2, 9, 16, 40, 47, 54)):   # 屋簷滴水
+                y = 26 + ((t * 7 + i * 1.7) % 6)
+                self._px(p, ex, int(y), QColor(170, 210, 255, 220))
+            for i in range(5):                               # 地上的小水花
+                x = (i * 11.3 + t * 3) % self.V["w"]
+                if (t * 3 + i) % 1 < 0.4:
+                    self._px(p, int(x), g - 1, QColor(200, 226, 255, 200), 2, 1)
+        elif weather == "snow":
+            for i in range(22):
+                x = left + (i * 13.1 + math.sin(t + i) * 2 + t * 1.2) % span_x
+                y = top + (i * 7.9 + t * 6) % span_y
+                self._px(p, int(x), int(y), QColor(255, 255, 255, 230))
+        if weather == "fog":
+            # 只蓋在畫好的房子上（桌面是透明的，不能整塊刷白），再加幾條慢慢飄的霧
+            p.save()
+            p.setCompositionMode(QPainter.CompositionMode_SourceAtop)
+            p.fillRect(self.rect(), QColor(236, 240, 246, 96))
+            p.restore()
+            for i, y in enumerate((g - 3, g - 9, g - 17, g - 26)):
+                w = 16 + (i * 7) % 11
+                x = left + (i * 23 + t * (1.5 + i * 0.4)) % (span_x + w) - w
+                self._px(p, int(x), y, QColor(246, 248, 252, 120), w, 2)
+                self._px(p, int(x) + 3, y - 1, QColor(246, 248, 252, 90), w - 6, 1)
+        if weather == "storm" and self._flash(t):
+            p.save()
+            p.setCompositionMode(QPainter.CompositionMode_SourceAtop)
+            p.fillRect(self.rect(), QColor(255, 255, 255, 90))
+            p.restore()
+
+    def _paint_fish(self, p):
+        x0, y0, w, h = interior.FISHTANK
+        t = time.monotonic()
+        for i, (col, sp) in enumerate(((QColor(255, 168, 64), 0.7), (QColor(255, 214, 84), 1.1))):
+            ph = (t * sp + i * 2.1) % (2 * (w - 3))
+            x = ph if ph < w - 3 else 2 * (w - 3) - ph
+            right = ph < w - 3
+            y = y0 + 2 + i * 2 + int(round(math.sin(t * 1.7 + i) * 0.6))
+            fx = int(x0 + x)
+            self._px(p, fx, y, col, 2, 1)
+            self._px(p, fx - 1 if right else fx + 2, y, col.darker(130))
+            self._px(p, fx + 1 if right else fx, y, QColor(58, 55, 55))
+        if int(t * 1.5) % 3 == 0:                             # 小泡泡
+            self._px(p, x0 + 9, y0 + 1 + int(t * 4) % 3, QColor(255, 255, 255, 200))
+
+    def _paint_fire(self, p):
+        x0, x1 = interior.A_FIRE
+        t = time.monotonic()
+        base = interior.AF - 2
+        cols = [QColor(255, 120, 40), QColor(255, 176, 52), QColor(255, 236, 140)]
+        for i, x in enumerate(range(x0 + 5, x1 - 5)):
+            hgt = 2 + int(2.5 + 2.5 * math.sin(t * 9 + i * 1.7) * math.sin(t * 3.1 + i))
+            for k in range(hgt):
+                c = cols[min(2, k * 3 // max(1, hgt) if k else 0)] if k < hgt - 1 else cols[2]
+                self._px(p, x, base - k, c)
+        glow_c = QColor(255, 170, 80, 40 + int(20 * math.sin(t * 6)))
+        self._px(p, x0 - 2, interior.AF - 18, glow_c, x1 - x0 + 4, 18)
+
     # ---------------- 積雪 ---------------- #
     def _paint_snow(self, p, roof, chimney, bushes, ground, width, sills, icicles, eave, keep_out=None):
         """一層厚厚、有起伏的雪：屋頂、煙囪、窗台、花叢和地上都會積雪，屋簷掛著小冰柱。"""
@@ -587,7 +953,8 @@ class House(QWidget):
                 h = 2 if (gx % 4) else 1
                 self._px(p, bx + gx, by + top - h, INK)
                 self._px(p, bx + gx, by + top - h + 1, SNOW, 1, h)
-        for x in range(0, width):                            # 地上的雪
+        start = -self.V.get("pad", 0) + 1 if width else 0
+        for x in range(start, width):                        # 地上的雪（樹下也有）
             h = 1 + (1 if (x * 5) % 7 < 3 else 0)
             self._px(p, x, ground - h - 1, INK)
             self._px(p, x, ground - h, SNOW, 1, h)
@@ -619,7 +986,26 @@ class House(QWidget):
             p.drawPixmap(self._art_rect(46, 26, 5, 8).topLeft(), art.pix(art.LANTERN, u))
 
     # ---------------- 滑鼠 ---------------- #
+    def raise_residents(self):
+        """點到貓屋時，macOS 會把貓屋視窗拉到最上面；把房間裡的貓咪再放回貓屋前面。"""
+        for cat in self.residents:
+            if cat.indoor is self and cat.isVisible():
+                cat.raise_()
+                if cat.overlay.isVisible():
+                    cat.overlay.raise_()
+
+    def _raise_soon(self):
+        self.raise_residents()
+        QTimer.singleShot(0, self.raise_residents)
+        QTimer.singleShot(120, self.raise_residents)
+
+    def changeEvent(self, e):
+        if e.type() in (QEvent.ActivationChange, QEvent.WindowStateChange):
+            self._raise_soon()
+        super().changeEvent(e)
+
     def mousePressEvent(self, e):
+        self._raise_soon()
         if e.button() == Qt.LeftButton:
             gp = e.globalPosition().toPoint()
             self._press = (gp, gp - self.pos(), False, self.pos())
@@ -648,18 +1034,27 @@ class House(QWidget):
             return
         dragging = self._press[2]
         self._press = None
+        self._raise_soon()
         if dragging:
             self.ctrl.settings.setValue("house_pos", self.pos())
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == Qt.LeftButton:
             self.toggle_view()
+        self._raise_soon()
 
     def fill_menu(self, menu):
         if self.view == "outside":
             menu.item(_eye_icon(), tr("look_inside"), lambda: self.set_view("inside"))
-        else:
+            menu.item("up", tr("go_attic"), self.go_attic)
+        elif self.view == "inside":
+            menu.item("up", tr("go_attic"), self.go_attic)
             menu.item("home", tr("look_outside"), lambda: self.set_view("outside"))
+        else:
+            menu.item("down", tr("go_room"), lambda: self.set_view("inside"))
+            menu.item("home", tr("look_outside"), lambda: self.set_view("outside"))
+        from PySide6.QtGui import QIcon
+        menu.item(QIcon(art.icon_pm("sofa")), tr("furniture_shop"), lambda: self.ctrl.open_furniture())
         if self.residents:
             menu.item("paw", tr("come_out"), self.ctrl.come_out)
         if len(self.residents) < len(self.ctrl.cats):
@@ -675,4 +1070,6 @@ class House(QWidget):
         self.fill_menu(menu)
         menu.addSeparator()
         menu.item("close", tr("house_hide"), self.hide_house)
+        self._raise_soon()
         menu.exec(e.globalPos())
+        self._raise_soon()

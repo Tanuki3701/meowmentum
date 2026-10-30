@@ -31,6 +31,13 @@ def phase(t=None):
     return "night"
 
 
+def season(t=None):
+    """北半球的四季：3-5 月春天、6-8 月夏天、9-11 月秋天、12-2 月冬天。"""
+    m = (t or now()).month
+    return {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring",
+            6: "summer", 7: "summer", 8: "summer"}.get(m, "autumn")
+
+
 def is_late_night(t=None):
     h = (t or now()).hour
     return 0 <= h < 5

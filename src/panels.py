@@ -453,6 +453,7 @@ class TimePicker(PixelPanel):
 
     def open(self, kind, cat):
         self.kind = kind
+        self.cat = cat
         if kind == "focus":
             current = (self.ctrl.recent["focus"] or [25])[0]
             self._title_icon.setPixmap(pixel.tomato(1.0, 2))
@@ -532,7 +533,7 @@ class TimePicker(PixelPanel):
     def _start(self):
         m = self._minutes()
         self.hide()
-        self.ctrl.picked(self.kind, m)
+        self.ctrl.picked(self.kind, m, getattr(self, "cat", None))
 
     def keyPressEvent(self, e):
         step = 5 if e.modifiers() & Qt.ShiftModifier else 1
@@ -579,7 +580,7 @@ class PaletteDialog(PixelPanel):
             (180, 90, 50), (150, 90, 200), (200, 60, 60), (130, 210, 230), (240, 220, 120)]
     PATCHES = [(246, 244, 240), (236, 218, 180), (222, 130, 60), (176, 96, 50), (110, 70, 50),
                (150, 150, 158), (90, 90, 100), (60, 52, 56), (236, 170, 190), (140, 190, 230)]
-    KINDS = ["fur", "eye", "eye2", "p1", "p2", "stripes", "white"]
+    KINDS = ["fur", "eye", "eye2", "p1", "p2", "stripes", "white", "points", "gradient", "ears", "tail"]
 
     def __init__(self, ctrl):
         super().__init__()
@@ -630,6 +631,10 @@ class PaletteDialog(PixelPanel):
                                            label=True, attr="extra_label")
         self.rows["stripes"] = self._swatch_row(lay, self.PATCHES, "stripes")
         self.rows["white"] = self._swatch_row(lay, self.PATCHES, "white")
+        self.detail_btns = self._toggle_row(lay, [(n, lambda n=n: self._toggle_detail(n)) for n in sprites.DETAILS],
+                                            label=True, attr="detail_label")
+        for n in sprites.DETAILS:
+            self.rows[n] = self._swatch_row(lay, self.PATCHES, n)
 
         self.mine_label = QLabel()
         self.mine_label.setFont(pixel.font(12))
@@ -712,6 +717,7 @@ class PaletteDialog(PixelPanel):
         self.eye2 = None
         self.base, self.p1, self.p2 = "solid", None, None
         self.stripes = self.white = None
+        self.points = self.gradient = self.ears = self.tail = None
 
     def _load_from_spec(self, color):
         """從貓咪現在的毛色開始調（內建毛色也可以，加上條紋或白色就變成自己的貓）。"""
@@ -735,12 +741,15 @@ class PaletteDialog(PixelPanel):
         self.stripes = tuple(stripes) if stripes else None
         self.white = tuple(white) if white else None
         self.eye2 = tuple(c["eye2"]) if c.get("eye2") else None
+        for n in sprites.DETAILS:
+            setattr(self, n, tuple(c[n]) if c.get(n) else None)
 
     def _current(self, kind):
         d1, d2 = sprites.PATTERN_DEFAULTS.get(self.base, (None, None))
         return {"fur": self.fur, "eye": self.eye, "eye2": self.eye2,
                 "p1": self.p1 or d1, "p2": self.p2 or d2,
-                "stripes": self.stripes, "white": self.white}[kind]
+                "stripes": self.stripes, "white": self.white, "points": self.points,
+                "gradient": self.gradient, "ears": self.ears, "tail": self.tail}[kind]
 
     def _more(self, kind):
         from PySide6.QtWidgets import QColorDialog
@@ -786,6 +795,16 @@ class PaletteDialog(PixelPanel):
                 self.fur = (60, 52, 56)
         self._refresh()
 
+    def _toggle_detail(self, name):
+        if getattr(self, name):
+            setattr(self, name, None)
+        else:
+            default = sprites.DETAIL_DEFAULTS[name] or sprites.stripe_default(self.fur)
+            setattr(self, name, tuple(default))
+            if name == "points" and self.fur == self.FURS[1]:
+                self.fur = (236, 218, 180)               # 暹羅貓：奶油色的身體
+        self._refresh()
+
     def _toggle_odd(self):
         if self.eye2:
             self.eye2 = None
@@ -796,6 +815,8 @@ class PaletteDialog(PixelPanel):
     def _refresh(self):
         show = {"eye2": bool(self.eye2), "p1": self.base != "solid", "p2": self.base == "calico",
                 "stripes": bool(self.stripes), "white": bool(self.white)}
+        for n in sprites.DETAILS:
+            show[n] = bool(getattr(self, n))
         for kind, row in self.rows.items():
             row["box"].setVisible(show.get(kind, True))
             cur = self._current(kind)
@@ -806,6 +827,8 @@ class PaletteDialog(PixelPanel):
             b.setChecked(n == self.base)
         self.extra_btns["stripes"].setChecked(bool(self.stripes))
         self.extra_btns["white"].setChecked(bool(self.white))
+        for n, b in self.detail_btns.items():
+            b.setChecked(bool(getattr(self, n)))
         self._label_rows()
         self.adjustSize()
         sp = self._spec()
@@ -815,7 +838,8 @@ class PaletteDialog(PixelPanel):
 
     def _spec(self):
         return sprites.derive_spec(self.fur, self.eye, self.base, self.p1, self.p2,
-                                   self.stripes, self.white, self.eye2)
+                                   self.stripes, self.white, self.eye2, self.points, self.gradient,
+                                   self.ears, self.tail)
 
     def _label_rows(self):
         self.rows["fur"]["label"].setText(tr("fur"))
@@ -826,6 +850,8 @@ class PaletteDialog(PixelPanel):
         self.rows["p2"]["label"].setText(tr("pattern_color2"))
         self.rows["stripes"]["label"].setText(tr("pattern_color_tabby"))
         self.rows["white"]["label"].setText(tr("pattern_color_tuxedo"))
+        for n in sprites.DETAILS:
+            self.rows[n]["label"].setText(tr("detail_color_" + n))
 
     def _fill_mine(self):
         while self.mine_row.count():
@@ -891,7 +917,8 @@ class PaletteDialog(PixelPanel):
         name = self.name_edit.text()
         look = dict(pattern=self.base, p1=self._current("p1") if self.base != "solid" else None,
                     p2=self._current("p2") if self.base == "calico" else None,
-                    stripes=self.stripes, white=self.white, eye2=self.eye2)
+                    stripes=self.stripes, white=self.white, eye2=self.eye2, points=self.points,
+                    gradient=self.gradient, ears=self.ears, tail=self.tail)
         if self.editing and self.ctrl.custom_color(self.editing):
             cid = self.ctrl.update_custom_color(self.editing, self.fur, self.eye, name, **look)
         else:
@@ -913,6 +940,9 @@ class PaletteDialog(PixelPanel):
         self.extra_label.setText(tr("pattern_extra"))
         self.extra_btns["stripes"].setText(tr("pat_stripes"))
         self.extra_btns["white"].setText(tr("pat_white"))
+        self.detail_label.setText(tr("pattern_detail"))
+        for n, b in self.detail_btns.items():
+            b.setText(tr("detail_" + n))
         self._label_rows()
         self.mine_label.setText(tr("my_colors_hint"))
         self.new_btn.setText(tr("new_color"))

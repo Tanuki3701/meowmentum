@@ -88,6 +88,9 @@ class Social(QObject):
             b.overlay.burst("heart", 4)
             a.hold(3000)
             b.hold(3200)
+            self.ctrl.progress.note("groom")
+            a.add_love(1)
+            b.add_love(1)
         self._meet(a, b, after)
 
     # ---------------- 一起睡 ---------------- #
